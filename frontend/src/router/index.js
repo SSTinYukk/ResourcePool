@@ -42,7 +42,7 @@ const router = createRouter({
     {
       path: '/forum',
       name: 'forum',
-      component: () => import('../views/forum/ForumCategories.vue')
+      component: () => import('../views/forum/ForumList.vue')
     },
     {
       path: '/forum/categories/:id',
@@ -55,7 +55,7 @@ const router = createRouter({
       component: () => import('../views/forum/TopicList.vue')
     },
     {
-      path: '/forum/topics/:id',
+      path: '/forum/topic/:id',
       name: 'topic-detail',
       component: () => import('../views/forum/TopicDetail.vue')
     },
@@ -63,21 +63,15 @@ const router = createRouter({
       path: '/forum/create-topic',
       name: 'create-topic',
       component: () => import('../views/forum/CreateTopic.vue'),
-      meta: { requiresAuth: true }
-    },
-    // AI聊天
-    {
-      path: '/chat',
-      name: 'chat',
-      component: () => import('../views/chat/ChatList.vue'),
-      meta: { requiresAuth: true }
+      meta: { requiresAuth: true },
     },
     {
-      path: '/chat/:id',
-      name: 'chat-detail',
-      component: () => import('../views/chat/ChatDetail.vue'),
+      path: '/forum/create',
+      name: 'forum-create',
+      component: () => import('../views/forum/CreateTopic.vue'),
       meta: { requiresAuth: true }
     },
+
     // 用户中心
     {
       path: '/user/profile',
@@ -92,9 +86,28 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/user/favorites',
+      name: 'user-favorites',
+      component: () => import('../views/user/Favorites.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/user/points',
       name: 'user-points',
       component: () => import('../views/user/UserPoints.vue'),
+      meta: { requiresAuth: true }
+    },
+    // AI助理
+    {
+      path: '/chat',
+      name: 'chat-list',
+      component: () => import('../views/chat/ChatList.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/chat/:id',
+      name: 'chat-detail',
+      component: () => import('../views/chat/ChatDetail.vue'),
       meta: { requiresAuth: true }
     },
     // 管理员路由

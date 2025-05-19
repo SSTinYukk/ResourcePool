@@ -1,5 +1,6 @@
 {
-  "name": "v1-bk-frontend",
+  "name": "open-microcomputer-resource-pool",
+  "description": "开放式微机原理资源池项目",
   "private": true,
   "version": "0.0.1",
   "type": "module",

@@ -40,5 +40,10 @@ export const authApi = {
   // 重置密码
   resetPassword(resetData) {
     return axios.post('/auth/reset-password', resetData)
+  },
+  
+  // 刷新Token
+  refreshToken() {
+    return axios.post('/api/user/refresh-token')
   }
 }

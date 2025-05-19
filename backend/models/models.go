@@ -36,6 +36,7 @@ type Resource struct {
 	UserID         uint           `json:"user_id"`
 	User           User           `json:"user" gorm:"foreignKey:UserID"`
 	Likes          []UserLike     `json:"likes" gorm:"foreignKey:ResourceID"`
+	Favorites      []UserFavorite `json:"favorites" gorm:"foreignKey:ResourceID"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `json:"-" gorm:"index"`
@@ -71,18 +72,20 @@ type PointRecord struct {
 
 // Topic 论坛主题模型
 type Topic struct {
-	ID         uint           `json:"id" gorm:"primaryKey"`
-	Title      string         `json:"title" gorm:"size:100;not null"`
-	Content    string         `json:"content" gorm:"type:text;not null"`
-	UserID     uint           `json:"user_id"`
-	User       User           `json:"user" gorm:"foreignKey:UserID"`
-	CategoryID uint           `json:"category_id"`
-	Category   Category       `json:"category" gorm:"foreignKey:CategoryID"`
-	ViewCount  int            `json:"view_count" gorm:"default:0"`
-	ReplyCount int            `json:"reply_count" gorm:"default:0"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `json:"-" gorm:"index"`
+	ID           uint           `json:"id" gorm:"primaryKey"`
+	Title        string         `json:"title" gorm:"size:100;not null"`
+	Content      string         `json:"content" gorm:"type:text;not null"`
+	UserID       uint           `json:"user_id"`
+	User         User           `json:"user" gorm:"foreignKey:UserID"`
+	CategoryID   uint           `json:"category_id"`
+	Category     Category       `json:"category" gorm:"foreignKey:CategoryID"`
+	ViewCount    int            `json:"view_count" gorm:"default:0"`
+	ReplyCount   int            `json:"reply_count" gorm:"default:0"`
+	LikeCount    int64          `json:"like_count" gorm:"default:0"`
+	DislikeCount int64          `json:"dislike_count" gorm:"default:0"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
 // Reply 论坛回复模型
@@ -98,23 +101,12 @@ type Reply struct {
 	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
-// ChatHistory AI聊天历史模型
-type ChatHistory struct {
-	ID        uint           `json:"id" gorm:"primaryKey"`
-	UserID    uint           `json:"user_id"`
-	User      User           `json:"user" gorm:"foreignKey:UserID"`
-	Title     string         `json:"title" gorm:"size:100"`
-	Messages  []ChatMessage  `json:"messages" gorm:"foreignKey:ChatHistoryID"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"`
-}
-
-// ChatMessage 聊天消息模型
-type ChatMessage struct {
-	ID            uint      `json:"id" gorm:"primaryKey"`
-	ChatHistoryID uint      `json:"chat_history_id"`
-	Sender        string    `json:"sender" gorm:"size:10"` // user, ai
-	Content       string    `json:"content" gorm:"type:text"`
-	CreatedAt     time.Time `json:"created_at"`
+type UserFavorite struct {
+	ID         uint           `json:"id" gorm:"primaryKey"`
+	UserID     uint           `json:"user_id"`
+	User       User           `json:"user" gorm:"foreignKey:UserID"`
+	ResourceID uint           `json:"resource_id"`
+	Resource   Resource       `json:"resource" gorm:"foreignKey:ResourceID"`
+	CreatedAt  time.Time      `json:"created_at"`
+	DeletedAt  gorm.DeletedAt `json:"-" gorm:"index"`
 }

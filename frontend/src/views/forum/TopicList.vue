@@ -67,27 +67,8 @@ const searchQuery = ref('')
 const fetchTopics = async () => {
   try {
     loading.value = true
-    // TODO: 替换为实际API调用
-    topics.value = [
-      {
-        id: 1,
-        title: 'Vue 3 新特性讨论',
-        author: '张三',
-        category: '前端开发',
-        replies: 15,
-        views: 120,
-        lastReply: '2023-05-15T10:30:00'
-      },
-      {
-        id: 2,
-        title: 'Laravel 10 发布',
-        author: '李四',
-        category: '后端开发',
-        replies: 8,
-        views: 85,
-        lastReply: '2023-05-14T16:45:00'
-      }
-    ]
+    const response = await forumApi.getTopics();
+    topics.value = response.data;
   } catch (error) {
     console.error('获取主题列表失败:', error)
   } finally {

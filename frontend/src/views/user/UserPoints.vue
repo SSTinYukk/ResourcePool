@@ -14,7 +14,9 @@
       <div class="flex items-center justify-between">
         <div>
           <h2 class="text-lg font-semibold text-gray-700">当前积分</h2>
-          <p class="text-3xl font-bold text-blue-600">{{ totalPoints }}</p>
+          <p v-if="isLoading" class="text-3xl font-bold text-gray-400">加载中...</p>
+          <p v-else-if="error" class="text-3xl font-bold text-red-500">加载失败</p>
+          <p v-else class="text-3xl font-bold text-blue-600">{{ totalPoints }}</p>
         </div>
         <Button 
           label="积分规则" 
@@ -23,10 +25,18 @@
           @click="showPointsRules"
         />
       </div>
+      <p v-if="error" class="mt-2 text-sm text-red-500">{{ error }}</p>
     </div>
 
     <div class="bg-white rounded-lg shadow-md p-6">
+      <div v-if="isLoading" class="flex justify-center py-8">
+        <i class="pi pi-spinner pi-spin text-2xl text-blue-500"></i>
+      </div>
+      <div v-else-if="error" class="flex justify-center py-8 text-red-500">
+        {{ error }}
+      </div>
       <DataTable 
+        v-else
         :value="pointsHistory" 
         :paginator="true" 
         :rows="10"
@@ -78,6 +88,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import axios from 'axios'
 import Button from 'primevue/button'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -90,18 +101,23 @@ const totalPoints = ref(0)
 const pointsHistory = ref([])
 const showRulesDialog = ref(false)
 
+const isLoading = ref(false)
+const error = ref(null)
+
 const fetchPointsData = async () => {
-  // TODO: Replace with actual API call
-  await new Promise(resolve => setTimeout(resolve, 300))
+  isLoading.value = true
+  error.value = null
   
-  totalPoints.value = 1250
-  pointsHistory.value = [
-    { id: 1, date: '2023-05-10', description: '每日签到', points: 10 },
-    { id: 2, date: '2023-05-09', description: '资源被下载', points: 5 },
-    { id: 3, date: '2023-05-08', description: '上传资源', points: 50 },
-    { id: 4, date: '2023-05-07', description: '资源被点赞', points: 2 },
-    { id: 5, date: '2023-05-06', description: '每日签到', points: 10 },
-  ]
+  try {
+    const { data } = await axios.get('/api/user/points')
+    totalPoints.value = data.totalPoints
+    pointsHistory.value = data.history
+  } catch (err) {
+    console.error('获取积分数据错误:', err)
+    error.value = err.response?.data?.message || '获取积分数据失败'
+  } finally {
+    isLoading.value = false
+  }
 }
 
 const showPointsRules = () => {

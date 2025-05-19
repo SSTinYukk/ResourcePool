@@ -22,10 +22,23 @@
 
     <!-- 主题列表 -->
     <DataTable :value="filteredTopics" :paginator="true" :rows="10"
+      :loading="loading"
       paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown"
       :rowsPerPageOptions="[5, 10, 20, 50]"
       responsiveLayout="scroll"
       class="p-datatable-sm">
+      
+      <template #empty>
+        <div v-if="loading" class="text-center py-8">
+          <ProgressSpinner style="width: 50px; height: 50px" strokeWidth="4" />
+          <p class="mt-4 text-gray-500">加载中...</p>
+        </div>
+        <div v-else-if="error" class="text-center py-8">
+          <i class="pi pi-exclamation-triangle text-5xl text-red-500 mb-4"></i>
+          <p class="text-red-500">{{ error }}</p>
+          <Button label="重试" icon="pi pi-refresh" class="p-button-text mt-4" @click="fetchTopics" />
+        </div>
+      </template>
       
       <Column field="title" header="主题" style="min-width: 50%">
         <template #body="{data}">
@@ -80,87 +93,74 @@ import InputText from 'primevue/inputtext'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Avatar from 'primevue/avatar'
+import ProgressSpinner from 'primevue/progressspinner'
 
 const router = useRouter()
 const searchQuery = ref('')
 const selectedCategory = ref(null)
 
-// 模拟数据 - 实际应用中应从API获取
-const categories = [
-  { id: 1, name: '全部' },
-  { id: 2, name: '技术讨论' },
-  { id: 3, name: '学习资源' },
-  { id: 4, name: '经验分享' },
-  { id: 5, name: '求助问答' },
-  { id: 6, name: '活动公告' }
-]
+const loading = ref(false)
+const error = ref(null)
+const categories = ref([])
+const topics = ref([])
 
-const topics = [
-  {
-    id: 1,
-    title: '如何高效学习Vue 3？',
-    brief: '分享一些学习Vue 3的经验和资源推荐',
-    author: '张三',
-    authorAvatar: null,
-    category: 3,
-    replies: 24,
-    views: 356,
-    lastReplyTime: new Date(2023, 8, 15, 14, 30),
-    lastReplyAuthor: '李四'
-  },
-  {
-    id: 2,
-    title: 'Tailwind CSS使用技巧分享',
-    brief: '整理了一些Tailwind CSS的常用技巧和最佳实践',
-    author: '王五',
-    authorAvatar: null,
-    category: 4,
-    replies: 18,
-    views: 245,
-    lastReplyTime: new Date(2023, 8, 16, 9, 15),
-    lastReplyAuthor: '赵六'
-  },
-  {
-    id: 3,
-    title: '求助：Go语言并发编程问题',
-    brief: '在使用goroutine时遇到了一些问题，求大神指点',
-    author: '李四',
-    authorAvatar: null,
-    category: 5,
-    replies: 12,
-    views: 189,
-    lastReplyTime: new Date(2023, 8, 16, 16, 45),
-    lastReplyAuthor: '张三'
-  },
-  {
-    id: 4,
-    title: '线上技术分享会：微服务架构实践',
-    brief: '下周三晚8点，欢迎参加我们的线上技术分享会',
-    author: '管理员',
-    authorAvatar: null,
-    category: 6,
-    replies: 5,
-    views: 120,
-    lastReplyTime: new Date(2023, 8, 14, 11, 20),
-    lastReplyAuthor: '王五'
-  },
-  {
-    id: 5,
-    title: 'Laravel与Vue.js前后端分离实践',
-    brief: '分享一个完整的前后端分离项目的开发经验',
-    author: '赵六',
-    authorAvatar: null,
-    category: 4,
-    replies: 30,
-    views: 412,
-    lastReplyTime: new Date(2023, 8, 17, 10, 5),
-    lastReplyAuthor: '张三'
+// 获取分类数据
+const fetchCategories = async () => {
+  try {
+    const response = await axios.get('/api/forum/categories')
+    categories.value = response.data
+  } catch (err) {
+    error.value = '获取分类数据失败'
+    console.error(err)
   }
-]
+}
+
+// 获取主题列表
+const fetchTopics = async () => {
+  loading.value = true
+  error.value = null
+  try {
+    console.log('正在请求主题列表API...')
+    const response = await axios.get('/api/forum/topics')
+    console.log('主题列表API响应:', response)
+    topics.value = Array.isArray(response.data.topics) ? response.data.topics.map(topic => ({
+      id: topic.id,
+      title: topic.title,
+      brief: topic.content.substring(0, 50),
+      author: topic.user?.username || '匿名',
+      authorAvatar: topic.user?.avatar,
+      replies: 0,
+      views: 0,
+      lastReplyTime: new Date(),
+      lastReplyAuthor: '',
+      category: 1
+    })) : []
+  } catch (err) {
+    error.value = `获取主题列表失败: ${err.message}`
+    console.error('获取主题列表API错误:', {
+      message: err.message,
+      response: err.response,
+      config: err.config
+    })
+  } finally {
+    loading.value = false
+  }
+}
+
+// 初始化数据
+onMounted(() => {
+  fetchCategories()
+  fetchTopics()
+})
 
 // 根据搜索和分类过滤主题
+// 添加缺失的导入
+import axios from 'axios'
+import { onMounted } from 'vue'
+
+// 修改filteredTopics计算属性中的topics引用
 const filteredTopics = computed(() => {
-  let result = [...topics]
+  let result = [...topics.value]  // 修改为topics.value
   
   // 搜索过滤
   if (searchQuery.value) {
@@ -202,6 +202,9 @@ function navigateToTopic(topicId) {
 
 // 导航到创建主题
 function navigateToCreate() {
-  router.push('/forum/create')
+  router.push('/forum/create').catch(err => {
+    console.error('导航失败:', err)
+    // 可以添加用户提示
+  })
 }
 </script>

@@ -1,11 +1,17 @@
 package controllers
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 
 	"g/front/backend/models"
@@ -13,12 +19,16 @@ import (
 
 // ForumController 论坛控制器
 type ForumController struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	Redis    *redis.Client
+	stopChan chan struct{} // 用于停止定时任务的通道
 }
 
 // NewForumController 创建论坛控制器实例
-func NewForumController(db *gorm.DB) *ForumController {
-	return &ForumController{DB: db}
+func NewForumController(db *gorm.DB, redisClient *redis.Client) *ForumController {
+	fc := &ForumController{DB: db, Redis: redisClient, stopChan: make(chan struct{})}
+	go fc.syncLikesToDB() // 启动定时同步任务
+	return fc
 }
 
 // GetCategories 获取论坛分类
@@ -76,6 +86,571 @@ func (c *ForumController) GetTopics(ctx *gin.Context) {
 		"total":    total,
 		"page":     page,
 		"pageSize": pageSize,
+	})
+}
+
+// LikeTopic 点赞主题
+func (c *ForumController) DislikeTopic(ctx *gin.Context) {
+	// 从上下文获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// Redis键名
+	likeKey := "topic_likes:" + topicID
+	dislikeKey := "topic_dislikes:" + topicID
+	userLikeKey := "user_likes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+	userDislikeKey := "user_dislikes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+
+	// 检查用户是否已点赞
+	isLiked, err := c.Redis.SIsMember(ctx, userLikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "检查点赞状态失败"})
+		return
+	}
+
+	// 如果已点赞，先取消点赞
+	if isLiked {
+		// 调试日志：打印当前Redis键值
+		fmt.Printf("[DEBUG] Before remove like - userLikeKey: %s, members: %v\n", userLikeKey, c.Redis.SMembers(ctx, userLikeKey).Val())
+		fmt.Printf("[DEBUG] Before remove like - likeKey: %s, value: %v\n", likeKey, c.Redis.Get(ctx, likeKey).Val())
+
+		_, err = c.Redis.SRem(ctx, userLikeKey, topicID).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消点赞失败"})
+			return
+		}
+		_, err = c.Redis.Decr(ctx, likeKey).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点赞数失败"})
+			return
+		}
+
+		// 调试日志：打印操作后的Redis键值
+		fmt.Printf("[DEBUG] After remove like - userLikeKey: %s, members: %v\n", userLikeKey, c.Redis.SMembers(ctx, userLikeKey).Val())
+		fmt.Printf("[DEBUG] After remove like - likeKey: %s, value: %v\n", likeKey, c.Redis.Get(ctx, likeKey).Val())
+	}
+
+	// 检查用户是否已点踩
+	isDisliked, err := c.Redis.SIsMember(ctx, userDislikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "检查点踩状态失败"})
+		return
+	}
+
+	if isDisliked {
+		// 取消点踩
+		_, err = c.Redis.SRem(ctx, userDislikeKey, topicID).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消点踩失败"})
+			return
+		}
+
+		_, err = c.Redis.Decr(ctx, dislikeKey).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点踩数失败"})
+			return
+		}
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"message":  "取消点踩成功",
+			"disliked": false,
+			"liked":    false,
+			"likes":    c.getLikeCount(topicID),
+			"dislikes": c.getDislikeCount(topicID),
+		})
+	} else {
+		// 点踩
+		// 调试日志：打印当前Redis键值
+		fmt.Printf("[DEBUG] Before add dislike - userDislikeKey: %s, members: %v\n", userDislikeKey, c.Redis.SMembers(ctx, userDislikeKey).Val())
+		fmt.Printf("[DEBUG] Before add dislike - dislikeKey: %s, value: %v\n", dislikeKey, c.Redis.Get(ctx, dislikeKey).Val())
+
+		_, err = c.Redis.SAdd(ctx, userDislikeKey, topicID).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "点踩失败"})
+			return
+		}
+
+		_, err = c.Redis.Incr(ctx, dislikeKey).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点踩数失败"})
+			return
+		}
+
+		// 调试日志：打印操作后的Redis键值
+		fmt.Printf("[DEBUG] After add dislike - userDislikeKey: %s, members: %v\n", userDislikeKey, c.Redis.SMembers(ctx, userDislikeKey).Val())
+		fmt.Printf("[DEBUG] After add dislike - dislikeKey: %s, value: %v\n", dislikeKey, c.Redis.Get(ctx, dislikeKey).Val())
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"message":  "点踩成功",
+			"disliked": true,
+			"liked":    false,
+			"likes":    c.getLikeCount(topicID),
+			"dislikes": c.getDislikeCount(topicID),
+		})
+	}
+
+	// 立即同步点踩数据
+	c.syncAllDislikes()
+}
+
+// AddFavorite 收藏主题
+func (c *ForumController) AddFavorite(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// 检查主题是否存在
+	var topic models.Topic
+	if err := c.DB.First(&topic, topicID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "主题不存在"})
+		return
+	}
+
+	// 检查是否已收藏
+	var existingFavorite models.UserTopicFavorite
+	if err := c.DB.Where("user_id = ? AND topic_id = ?", userID, topic.ID).First(&existingFavorite).Error; err == nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "已收藏该主题", "isFavorited": true})
+		return
+	}
+
+	// 创建收藏记录
+	favorite := models.UserTopicFavorite{
+		UserID:    userID.(uint),
+		TopicID:   topic.ID,
+		CreatedAt: time.Now(),
+	}
+
+	if err := c.DB.Create(&favorite).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "收藏失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{"success": true, "isFavorited": true, "message": "收藏成功"})
+}
+
+// RemoveFavorite 取消收藏主题
+func (c *ForumController) RemoveFavorite(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// 检查主题是否存在
+	var topic models.Topic
+	if err := c.DB.First(&topic, topicID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "主题不存在"})
+		return
+	}
+
+	// 删除收藏记录
+	if err := c.DB.Where("user_id = ? AND topic_id = ?", userID, topic.ID).Delete(&models.UserTopicFavorite{}).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消收藏失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "已取消收藏", "isFavorited": false})
+}
+
+// GetFavoriteStatus 获取主题收藏状态
+func (c *ForumController) GetFavoriteStatus(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// 检查收藏状态
+	var favorite models.UserTopicFavorite
+	if err := c.DB.Where("user_id = ? AND topic_id = ?", userID, topicID).First(&favorite).Error; err != nil {
+		ctx.JSON(http.StatusOK, gin.H{"isFavorited": false})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"isFavorited": true})
+}
+
+// syncLikesToDB 定时将Redis中的点赞数据同步到MySQL
+func (c *ForumController) syncLikesToDB() {
+	ticker := time.NewTicker(30 * time.Second) // 每30秒同步一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.syncAllLikes()
+		case <-c.stopChan:
+			return
+		}
+	}
+}
+
+// syncAllLikes 同步所有主题的点赞数到数据库
+func (c *ForumController) syncAllLikes() {
+	// 获取所有主题ID
+	var topicIDs []string
+	iter := c.Redis.Scan(context.Background(), 0, "topic_likes:*", 0).Iterator()
+	for iter.Next(context.Background()) {
+		key := iter.Val()
+		topicID := strings.TrimPrefix(key, "topic_likes:")
+		topicIDs = append(topicIDs, topicID)
+	}
+
+	// 同步每个主题的点赞数
+	for _, topicID := range topicIDs {
+		likeKey := "topic_likes:" + topicID
+		dislikeKey := "topic_dislikes:" + topicID
+
+		// 获取点赞数
+		likeCount, err := c.Redis.Get(context.Background(), likeKey).Int64()
+		if err != nil && err != redis.Nil {
+			continue
+		}
+
+		// 获取点踩数
+		dislikeCount, err := c.Redis.Get(context.Background(), dislikeKey).Int64()
+		if err != nil && err != redis.Nil {
+			continue
+		}
+
+		// 更新数据库
+		c.DB.Model(&models.Topic{}).Where("id = ?", topicID).
+			Updates(map[string]interface{}{
+				"like_count":    likeCount,
+				"dislike_count": dislikeCount,
+			})
+	}
+}
+
+func (c *ForumController) syncAllDislikes() {
+	// 获取所有主题ID
+	var topicIDs []string
+	iter := c.Redis.Scan(context.Background(), 0, "topic_dislikes:*", 0).Iterator()
+	for iter.Next(context.Background()) {
+		key := iter.Val()
+		topicID := strings.TrimPrefix(key, "topic_dislikes:")
+		topicIDs = append(topicIDs, topicID)
+	}
+
+	// 同步每个主题的点踩数
+	for _, topicID := range topicIDs {
+		likeKey := "topic_likes:" + topicID
+		dislikeKey := "topic_dislikes:" + topicID
+
+		// 获取点赞数
+		likeCount, err := c.Redis.Get(context.Background(), likeKey).Int64()
+		if err != nil && err != redis.Nil {
+			continue
+		}
+
+		// 获取点踩数
+		dislikeCount, err := c.Redis.Get(context.Background(), dislikeKey).Int64()
+		if err != nil && err != redis.Nil {
+			continue
+		}
+
+		// 更新数据库
+		c.DB.Model(&models.Topic{}).Where("id = ?", topicID).
+			Updates(map[string]interface{}{
+				"like_count":    likeCount,
+				"dislike_count": dislikeCount,
+			})
+	}
+}
+
+func (c *ForumController) getLikeCount(topicID string) int64 {
+	likeKey := "topic_likes:" + topicID
+	likeCount, err := c.Redis.Get(context.Background(), likeKey).Int64()
+	if err != nil && err != redis.Nil {
+		return 0
+	}
+	return likeCount
+}
+
+func (c *ForumController) getDislikeCount(topicID string) int64 {
+	dislikeKey := "topic_dislikes:" + topicID
+	dislikeCount, err := c.Redis.Get(context.Background(), dislikeKey).Int64()
+	if err != nil && err != redis.Nil {
+		return 0
+	}
+	return dislikeCount
+}
+
+func (c *ForumController) UnlikeTopic(ctx *gin.Context) {
+	// 从上下文获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// Redis键名
+	likeKey := "topic_likes:" + topicID
+	userLikeKey := "user_likes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+
+	// 检查用户是否已点赞
+	isLiked, err := c.Redis.SIsMember(ctx, userLikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "检查点赞状态失败"})
+		return
+	}
+
+	if !isLiked {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "未点赞该主题"})
+		return
+	}
+
+	// 取消点赞
+	_, err = c.Redis.SRem(ctx, userLikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消点赞失败"})
+		return
+	}
+
+	_, err = c.Redis.Decr(ctx, likeKey).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点赞数失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":  "取消点赞成功",
+		"liked":    false,
+		"likes":    c.getLikeCount(topicID),
+		"dislikes": c.getDislikeCount(topicID),
+	})
+
+	// 立即同步点赞数据
+	c.syncAllLikes()
+}
+
+func (c *ForumController) UnDislikeTopic(ctx *gin.Context) {
+	// 从上下文获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// Redis键名
+	dislikeKey := "topic_dislikes:" + topicID
+	userDislikeKey := "user_dislikes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+
+	// 检查用户是否已点踩
+	isDisliked, err := c.Redis.SIsMember(ctx, userDislikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "检查点踩状态失败"})
+		return
+	}
+
+	if !isDisliked {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "未点踩该主题"})
+		return
+	}
+
+	// 取消点踩
+	_, err = c.Redis.SRem(ctx, userDislikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消点踩失败"})
+		return
+	}
+
+	_, err = c.Redis.Decr(ctx, dislikeKey).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点踩数失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":  "取消点踩成功",
+		"disliked": false,
+		"likes":    c.getLikeCount(topicID),
+		"dislikes": c.getDislikeCount(topicID),
+	})
+
+	// 立即同步点踩数据
+	c.syncAllDislikes()
+}
+
+func (c *ForumController) LikeTopic(ctx *gin.Context) {
+	// 从上下文获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 获取主题ID
+	topicID := ctx.Param("id")
+
+	// Redis键名
+	likeKey := "topic_likes:" + topicID
+	dislikeKey := "topic_dislikes:" + topicID
+	userLikeKey := "user_likes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+	userDislikeKey := "user_dislikes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+
+	// 检查用户是否已点踩
+	isDisliked, err := c.Redis.SIsMember(ctx, userDislikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "检查点踩状态失败"})
+		return
+	}
+
+	// 如果已点踩，先取消点踩
+	if isDisliked {
+		// 调试日志：打印当前Redis键值
+		fmt.Printf("[DEBUG] Before remove dislike - userDislikeKey: %s, members: %v\n", userDislikeKey, c.Redis.SMembers(ctx, userDislikeKey).Val())
+		fmt.Printf("[DEBUG] Before remove dislike - dislikeKey: %s, value: %v\n", dislikeKey, c.Redis.Get(ctx, dislikeKey).Val())
+
+		_, err = c.Redis.SRem(ctx, userDislikeKey, topicID).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消点踩失败"})
+			return
+		}
+		_, err = c.Redis.Decr(ctx, dislikeKey).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点踩数失败"})
+			return
+		}
+
+		// 调试日志：打印操作后的Redis键值
+		fmt.Printf("[DEBUG] After remove dislike - userDislikeKey: %s, members: %v\n", userDislikeKey, c.Redis.SMembers(ctx, userDislikeKey).Val())
+		fmt.Printf("[DEBUG] After remove dislike - dislikeKey: %s, value: %v\n", dislikeKey, c.Redis.Get(ctx, dislikeKey).Val())
+	}
+
+	// 检查用户是否已点赞
+	isLiked, err := c.Redis.SIsMember(ctx, userLikeKey, topicID).Result()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "检查点赞状态失败"})
+		return
+	}
+
+	if isLiked {
+		// 取消点赞
+		_, err = c.Redis.SRem(ctx, userLikeKey, topicID).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消点赞失败"})
+			return
+		}
+
+		_, err = c.Redis.Decr(ctx, likeKey).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点赞数失败"})
+			return
+		}
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"message":  "取消点赞成功",
+			"liked":    false,
+			"disliked": false,
+			"likes":    c.getLikeCount(topicID),
+			"dislikes": c.getDislikeCount(topicID),
+		})
+	} else {
+		// 点赞
+		// 调试日志：打印当前Redis键值
+		fmt.Printf("[DEBUG] Before add like - userLikeKey: %s, members: %v\n", userLikeKey, c.Redis.SMembers(ctx, userLikeKey).Val())
+		fmt.Printf("[DEBUG] Before add like - likeKey: %s, value: %v\n", likeKey, c.Redis.Get(ctx, likeKey).Val())
+
+		_, err = c.Redis.SAdd(ctx, userLikeKey, topicID).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "点赞失败"})
+			return
+		}
+
+		_, err = c.Redis.Incr(ctx, likeKey).Result()
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新点赞数失败"})
+			return
+		}
+
+		// 调试日志：打印操作后的Redis键值
+		fmt.Printf("[DEBUG] After add like - userLikeKey: %s, members: %v\n", userLikeKey, c.Redis.SMembers(ctx, userLikeKey).Val())
+		fmt.Printf("[DEBUG] After add like - likeKey: %s, value: %v\n", likeKey, c.Redis.Get(ctx, likeKey).Val())
+
+		ctx.JSON(http.StatusOK, gin.H{
+			"message":  "点赞成功",
+			"liked":    true,
+			"disliked": false,
+			"likes":    c.getLikeCount(topicID),
+			"dislikes": c.getDislikeCount(topicID),
+		})
+	}
+
+	// 立即同步点赞数据
+	c.syncAllLikes()
+}
+
+// GetTopicLikes 获取主题点赞数
+func (c *ForumController) GetTopicLikes(ctx *gin.Context) {
+	topicID := ctx.Param("id")
+	likeKey := "topic_likes:" + topicID
+	dislikeKey := "topic_dislikes:" + topicID
+
+	// 获取点赞数
+	likeCount, err := c.Redis.Get(ctx, likeKey).Int64()
+	if err == redis.Nil {
+		likeCount = 0
+	} else if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取点赞数失败"})
+		return
+	}
+
+	// 获取点踩数
+	dislikeCount, err := c.Redis.Get(ctx, dislikeKey).Int64()
+	if err == redis.Nil {
+		dislikeCount = 0
+	} else if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取点踩数失败"})
+		return
+	}
+
+	// 获取用户点赞状态
+	userLiked := false
+	userDisliked := false
+	if userID, exists := ctx.Get("userID"); exists {
+		userLikeKey := "user_likes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+		userDislikeKey := "user_dislikes:" + strconv.FormatUint(uint64(userID.(uint)), 10)
+
+		if isLiked, _ := c.Redis.SIsMember(ctx, userLikeKey, topicID).Result(); isLiked {
+			userLiked = true
+		}
+		if isDisliked, _ := c.Redis.SIsMember(ctx, userDislikeKey, topicID).Result(); isDisliked {
+			userDisliked = true
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"likes":        likeCount,
+		"dislikes":     dislikeCount,
+		"userLiked":    userLiked,
+		"userDisliked": userDisliked,
 	})
 }
 
@@ -446,4 +1021,78 @@ func (c *ForumController) DeleteReply(ctx *gin.Context) {
 	c.DB.Model(&topic).Update("reply_count", gorm.Expr("reply_count - 1"))
 
 	ctx.JSON(http.StatusOK, gin.H{"message": "回复已删除"})
+}
+
+// GetUserFavorites 获取用户收藏的帖子列表
+func (c *ForumController) GetUserFavorites(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取分页和排序参数
+	pageStr := ctx.DefaultQuery("page", "1")
+	limitStr := ctx.DefaultQuery("limit", "10")
+	sort := ctx.DefaultQuery("sort", "created_at desc")
+
+	// 转换分页参数
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	// 计算偏移量
+	offset := (page - 1) * limit
+
+	// 查询用户收藏的帖子
+	var favorites []models.UserTopicFavorite
+	query := c.DB.Preload("Topic").Preload("Topic.User").Preload("Topic.Category")
+	query = query.Where("user_id = ?", userID).Order(sort).Offset(offset).Limit(limit)
+
+	if err := query.Find(&favorites).Error; err != nil {
+		log.Printf("获取用户收藏失败: %v, 用户ID: %v, 查询参数: page=%d, limit=%d, sort=%s", err, userID, page, limit, sort)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取收藏列表失败", "details": "服务器内部错误"})
+		return
+	}
+
+	// 获取总数
+	var total int64
+	c.DB.Model(&models.UserTopicFavorite{}).Where("user_id = ?", userID).Count(&total)
+
+	// 格式化返回数据
+	var topics []gin.H
+	for _, favorite := range favorites {
+		// 获取主题信息
+		var topic models.Topic
+		if err := c.DB.Preload("User").Preload("Category").First(&topic, favorite.TopicID).Error; err != nil {
+			continue // 跳过已删除的主题
+		}
+
+		topics = append(topics, gin.H{
+			"id":          topic.ID,
+			"title":       topic.Title,
+			"content":     topic.Content,
+			"category":    topic.Category,
+			"user":        topic.User,
+			"view_count":  topic.ViewCount,
+			"reply_count": topic.ReplyCount,
+			"created_at":  favorite.CreatedAt,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"data": topics,
+		"meta": gin.H{
+			"total":     total,
+			"page":      page,
+			"limit":     limit,
+			"totalPage": int(math.Ceil(float64(total) / float64(limit))),
+		},
+	})
 }

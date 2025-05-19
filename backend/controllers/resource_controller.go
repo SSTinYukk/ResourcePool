@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,9 +25,175 @@ type ResourceController struct {
 	MinioClient *minio.Client
 }
 
+// AddFavorite 添加资源收藏
+func (c *ResourceController) AddFavorite(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取资源ID
+	resourceID := ctx.Param("id")
+
+	// 检查资源是否存在
+	var resource models.Resource
+	if err := c.DB.First(&resource, resourceID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	// 检查是否已收藏
+	var existingFavorite models.UserFavorite
+	if err := c.DB.Where("user_id = ? AND resource_id = ?", userID, resource.ID).First(&existingFavorite).Error; err == nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "已收藏该资源", "isFavorited": true})
+		return
+	}
+
+	// 创建收藏记录
+	favorite := models.UserFavorite{
+		UserID:     userID.(uint),
+		ResourceID: resource.ID,
+		CreatedAt:  time.Now(),
+	}
+
+	if err := c.DB.Create(&favorite).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "收藏失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusCreated, gin.H{"success": true, "isFavorited": true, "message": "收藏成功"})
+}
+
+// RemoveFavorite 取消资源收藏
+func (c *ResourceController) RemoveFavorite(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取资源ID
+	resourceID := ctx.Param("id")
+
+	// 检查资源是否存在
+	var resource models.Resource
+	if err := c.DB.First(&resource, resourceID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	// 删除收藏记录
+	if err := c.DB.Where("user_id = ? AND resource_id = ?", userID, resource.ID).Delete(&models.UserFavorite{}).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "取消收藏失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "已取消收藏", "isFavorited": false})
+}
+
+// GetFavoriteStatus 获取资源收藏状态
+func (c *ResourceController) GetFavoriteStatus(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取资源ID
+	resourceID := ctx.Param("id")
+
+	// 检查资源是否存在
+	var resource models.Resource
+	if err := c.DB.First(&resource, resourceID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	// 检查是否已收藏
+	var existingFavorite models.UserFavorite
+	if err := c.DB.Where("user_id = ? AND resource_id = ?", userID, resource.ID).First(&existingFavorite).Error; err != nil {
+		ctx.JSON(http.StatusOK, gin.H{"is_favorite": false, "isFavorited": false})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"is_favorite": true, "isFavorited": true})
+}
+
+// GetUserFavorites 获取用户收藏列表
+func (c *ResourceController) GetUserFavorites(ctx *gin.Context) {
+	// 获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 查询用户收藏的资源
+	var favorites []models.UserFavorite
+	if err := c.DB.Preload("Resource").Preload("Resource.User").Where("user_id = ?", userID).Find(&favorites).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取收藏列表失败"})
+		return
+	}
+
+	// 格式化返回数据
+	var resources []gin.H
+	for _, favorite := range favorites {
+		resources = append(resources, gin.H{
+			"id":          favorite.Resource.ID,
+			"title":       favorite.Resource.Title,
+			"description": favorite.Resource.Description,
+			"category":    favorite.Resource.Category,
+			"user":        favorite.Resource.User,
+			"created_at":  favorite.CreatedAt,
+		})
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": resources})
+}
+
 // NewResourceController 创建资源控制器实例
 func NewResourceController(db *gorm.DB, minioClient *minio.Client) *ResourceController {
 	return &ResourceController{DB: db, MinioClient: minioClient}
+}
+
+// DeleteUserResource 删除用户资源
+func (c *ResourceController) DeleteUserResource(ctx *gin.Context) {
+	// 获取资源ID
+	resourceID, err := strconv.Atoi(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的资源ID"})
+		return
+	}
+
+	// 获取当前用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "用户未认证"})
+		return
+	}
+
+	// 检查资源是否存在且属于该用户
+	var resource models.Resource
+	if err := c.DB.Where("id = ? AND user_id = ?", resourceID, userID).First(&resource).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在或不属于当前用户"})
+		} else {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"error": "查询资源失败"})
+		}
+		return
+	}
+
+	// 删除资源
+	if err := c.DB.Delete(&resource).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除资源失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "资源删除成功"})
 }
 
 // GetResources 获取资源列表
@@ -36,31 +203,43 @@ func (c *ResourceController) GetResources(ctx *gin.Context) {
 	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "10"))
 	categoryID := ctx.Query("category")
 	sort := ctx.DefaultQuery("sort", "newest")
+	// 获取搜索关键词
+	query := ctx.Query("query")
 
 	// 构建查询
-	query := c.DB.Model(&models.Resource{}).Where("status = ?", "approved")
+	dbQuery := c.DB.Model(&models.Resource{}).Where("status = ?", "approved")
+
+	// 关键词搜索
+	if query != "" {
+		query = strings.TrimSpace(query)
+		if len(query) < 2 {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "搜索关键词至少需要2个字符"})
+			return
+		}
+		dbQuery = dbQuery.Where("title LIKE ? OR description LIKE ?", "%"+query+"%", "%"+query+"%")
+	}
 
 	// 分类过滤
 	if categoryID != "" {
-		query = query.Where("category_id = ?", categoryID)
+		dbQuery = dbQuery.Where("category_id = ?", categoryID)
 	}
 
 	// 排序
 	switch sort {
 	case "newest":
-		query = query.Order("created_at DESC")
+		dbQuery = dbQuery.Order("created_at DESC")
 	case "popular":
-		query = query.Order("download_count DESC")
+		dbQuery = dbQuery.Order("download_count DESC")
 	default:
-		query = query.Order("created_at DESC")
+		dbQuery = dbQuery.Order("created_at DESC")
 	}
 
 	// 执行查询
 	var resources []models.Resource
 	var total int64
 
-	query.Count(&total)
-	query.Preload("User").Preload("Category").
+	dbQuery.Count(&total)
+	dbQuery.Preload("User").Preload("Category").
 		Limit(pageSize).
 		Offset((page - 1) * pageSize).
 		Find(&resources)
@@ -71,6 +250,9 @@ func (c *ResourceController) GetResources(ctx *gin.Context) {
 		"total":     total,
 		"page":      page,
 		"pageSize":  pageSize,
+		"query":     ctx.Query("query"),                 // 返回原始查询关键词
+		"category":  ctx.Query("category"),              // 返回分类ID
+		"sort":      ctx.DefaultQuery("sort", "newest"), // 返回排序方式
 	})
 }
 
@@ -90,6 +272,42 @@ func (c *ResourceController) GetResourceById(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, resource)
 }
 
+// GetResourceDownloadUrl 获取资源下载URL
+func (c *ResourceController) GetResourceDownloadUrl(ctx *gin.Context) {
+	id := ctx.Param("id")
+
+	var resource models.Resource
+	result := c.DB.First(&resource, id)
+	if result.Error != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	// 检查MinIO文件是否存在
+	ctxBg := context.Background()
+	_, err := c.MinioClient.StatObject(ctxBg, config.GetEnv("resources", "resources"), resource.FilePath, minio.StatObjectOptions{})
+	if err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{
+			"error": "文件不存在",
+			"details": gin.H{
+				"bucket": config.GetEnv("resources", "resources"),
+				"key":    resource.FilePath,
+			},
+		})
+		return
+	}
+
+	// 生成MinIO下载URL
+	endpoint := config.GetEnv("MINIO_ENDPOINT", "47.121.210.209:9001")
+	bucketName := config.GetEnv("resources", "resources")
+	fileURL := fmt.Sprintf("http://%s/%s/%s", endpoint, bucketName, resource.FilePath)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"url":      fileURL,
+		"filename": resource.FilePath,
+	})
+}
+
 // GetCategories 获取资源分类
 func (c *ResourceController) GetCategories(ctx *gin.Context) {
 	var categories []models.Category
@@ -98,10 +316,118 @@ func (c *ResourceController) GetCategories(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, categories)
 }
 
+// Search 搜索资源
+// @Summary 搜索资源
+// @Description 根据关键词、分类、标签等条件搜索资源
+// @Tags resources
+// @Accept json
+// @Produce json
+// @Param q query string false "搜索关键词"
+// @Param category_id query int false "分类ID"
+// @Param tags query string false "标签，多个用逗号分隔"
+// @Param sort query string false "排序方式" enums(created_at:desc,download_count:desc,title:asc,rating:desc) default(created_at:desc)
+// @Param price_range query string false "价格范围" enums(all,free,paid) default(all)
+// @Param page query int false "页码" default(1)
+// @Param pageSize query int false "每页数量" default(12)
+// @Success 200 {object} map[string]interface{} "{\"resources\": [], \"total\": 0}"
+// @Router /resources/search [get]
+func (c *ResourceController) Search(ctx *gin.Context) {
+	// 获取查询参数
+	q := ctx.Query("q")
+	categoryID, _ := strconv.Atoi(ctx.Query("category_id"))
+	tags := ctx.Query("tags")
+	sort := ctx.Query("sort")
+	priceRange := ctx.Query("price_range")
+	page, _ := strconv.Atoi(ctx.Query("page"))
+	pageSize, _ := strconv.Atoi(ctx.Query("pageSize"))
+
+	// 设置默认值
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 12
+	}
+
+	// 构建查询条件
+	query := c.DB.Model(&models.Resource{}).Where("status = ?", "approved")
+
+	// 关键词搜索
+	if q != "" {
+		q = strings.TrimSpace(q)
+		if len(q) < 2 {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "搜索关键词至少需要2个字符"})
+			return
+		}
+
+		// 更精确的搜索条件
+		query = query.Where(
+			"MATCH(title, description) AGAINST(? IN BOOLEAN MODE) OR "+
+				"title LIKE ? OR description LIKE ?",
+			q+"*", "%"+q+"%", "%"+q+"%")
+	}
+
+	// 分类过滤
+	if categoryID > 0 {
+		query = query.Where("category_id = ?", categoryID)
+	}
+
+	// 标签过滤
+	if tags != "" {
+		query = query.Joins("JOIN resource_tags ON resource_tags.resource_id = resources.id").
+			Joins("JOIN tags ON tags.id = resource_tags.tag_id").
+			Where("tags.name IN ?", strings.Split(tags, ","))
+	}
+
+	// 价格范围过滤
+	if priceRange == "free" {
+		query = query.Where("price = 0")
+	} else if priceRange == "paid" {
+		query = query.Where("price > 0")
+	}
+
+	// 排序
+	switch sort {
+	case "download_count:desc":
+		query = query.Order("download_count DESC")
+	case "title:asc":
+		query = query.Order("title ASC")
+	case "rating:desc":
+		query = query.Order("rating DESC")
+	default:
+		query = query.Order("created_at DESC")
+	}
+
+	// 执行分页查询
+	var resources []models.Resource
+	var total int64
+
+	query.Count(&total)
+	query.Preload("User").Preload("Category").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&resources)
+
+	// 返回结果
+	ctx.JSON(http.StatusOK, gin.H{
+		"resources": resources,
+		"total":     total,
+		"page":      page,
+		"pageSize":  pageSize,
+		"query":     ctx.Query("query"),                 // 返回原始查询关键词
+		"category":  ctx.Query("category"),              // 返回分类ID
+		"sort":      ctx.DefaultQuery("sort", "newest"), // 返回排序方式
+	})
+}
+
 // GetComments 获取资源评论
 func (c *ResourceController) GetComments(ctx *gin.Context) {
 	// 获取资源ID
 	resourceID := ctx.Param("id")
+	if resourceID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "资源ID不能为空"})
+		return
+	}
 
 	// 分页参数
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
@@ -128,10 +454,53 @@ func (c *ResourceController) GetComments(ctx *gin.Context) {
 	})
 }
 
+func (c *ResourceController) DeleteComment(ctx *gin.Context) {
+	// 获取评论ID
+	commentID := ctx.Param("id")
+
+	// 获取当前用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 查询评论
+	var comment models.Comment
+	if err := c.DB.First(&comment, commentID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "评论不存在"})
+		return
+	}
+
+	// 检查权限：评论所有者或管理员
+	var user models.User
+	if err := c.DB.First(&user, userID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	if comment.UserID != userID.(uint) && user.Role != "admin" {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权删除此评论"})
+		return
+	}
+
+	// 删除评论
+	if err := c.DB.Delete(&comment).Error; err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除评论失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "评论删除成功"})
+}
+
 // PostComment 提交资源评论
 func (c *ResourceController) PostComment(ctx *gin.Context) {
 	// 获取资源ID
 	resourceID := ctx.Param("id")
+	if resourceID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "资源ID不能为空"})
+		return
+	}
 
 	// 验证用户身份
 	log.Printf("请求头信息: %+v", ctx.Request.Header)
@@ -392,7 +761,11 @@ func (c *ResourceController) UploadResource(ctx *gin.Context) {
 // LikeResource 点赞/取消点赞资源
 func (c *ResourceController) LikeResource(ctx *gin.Context) {
 	resourceID := ctx.Param("id")
-	userID := ctx.GetString("user_id")
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
 
 	var resource models.Resource
 	if err := c.DB.First(&resource, resourceID).Error; err != nil {
@@ -412,10 +785,9 @@ func (c *ResourceController) LikeResource(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"isLiked": false, "likes": likeCount})
 	} else {
 		// 点赞
-		userIDUint, _ := strconv.ParseUint(userID, 10, 32)
 		resourceIDUint, _ := strconv.ParseUint(resourceID, 10, 32)
 		userLike = models.UserLike{
-			UserID:     uint(userIDUint),
+			UserID:     userID.(uint),
 			ResourceID: uint(resourceIDUint),
 		}
 		c.DB.Create(&userLike)
@@ -426,10 +798,74 @@ func (c *ResourceController) LikeResource(ctx *gin.Context) {
 	}
 }
 
+// DislikeResource 取消资源点赞
+func (c *ResourceController) DislikeResource(ctx *gin.Context) {
+	resourceID := ctx.Param("id")
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	var resource models.Resource
+	if err := c.DB.First(&resource, resourceID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	var userLike models.UserLike
+	result := c.DB.Where("user_id = ? AND resource_id = ?", userID, resourceID).First(&userLike)
+
+	if result.Error == nil {
+		// 存在点赞记录，删除它
+		c.DB.Delete(&userLike)
+		// 使用count查询获取当前点赞数
+		var likeCount int64
+		c.DB.Model(&models.UserLike{}).Where("resource_id = ?", resourceID).Count(&likeCount)
+		ctx.JSON(http.StatusOK, gin.H{"isLiked": false, "likes": likeCount})
+	} else {
+		// 没有点赞记录，返回当前状态
+		var likeCount int64
+		c.DB.Model(&models.UserLike{}).Where("resource_id = ?", resourceID).Count(&likeCount)
+		ctx.JSON(http.StatusOK, gin.H{"isLiked": false, "likes": likeCount})
+	}
+}
+
+// GetResourceLikeStatus 获取资源点赞状态
+func (c *ResourceController) GetResourceLikeStatus(ctx *gin.Context) {
+	resourceID := ctx.Param("id")
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	var resource models.Resource
+	if err := c.DB.First(&resource, resourceID).Error; err != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	// 检查用户是否已点赞
+	var userLike models.UserLike
+	result := c.DB.Where("user_id = ? AND resource_id = ?", userID, resourceID).First(&userLike)
+	isLiked := result.Error == nil
+
+	// 获取点赞总数
+	var likeCount int64
+	c.DB.Model(&models.UserLike{}).Where("resource_id = ?", resourceID).Count(&likeCount)
+
+	ctx.JSON(http.StatusOK, gin.H{"isLiked": isLiked, "likes": likeCount})
+}
+
 // FavoriteResource 收藏/取消收藏资源
 func (c *ResourceController) FavoriteResource(ctx *gin.Context) {
 	resourceID := ctx.Param("id")
-	userID := ctx.GetString("user_id")
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
 
 	var userFavorite models.UserFavorite
 	result := c.DB.Where("user_id = ? AND resource_id = ?", userID, resourceID).First(&userFavorite)
@@ -440,7 +876,12 @@ func (c *ResourceController) FavoriteResource(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"isFavorited": false})
 	} else {
 		// 收藏
-		userIDUint, _ := strconv.ParseUint(userID, 10, 32)
+		userIDStr, ok := userID.(string)
+		if !ok {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID格式"})
+			return
+		}
+		userIDUint, _ := strconv.ParseUint(userIDStr, 10, 32)
 		resourceIDUint, _ := strconv.ParseUint(resourceID, 10, 32)
 		userFavorite = models.UserFavorite{
 			UserID:     uint(userIDUint),
@@ -451,18 +892,99 @@ func (c *ResourceController) FavoriteResource(ctx *gin.Context) {
 	}
 }
 
+// DeleteMyResource 删除用户资源
+func (c *ResourceController) DeleteMyResource(ctx *gin.Context) {
+	// 从上下文获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 获取资源ID
+	id := ctx.Param("id")
+
+	// 查询资源
+	var resource models.Resource
+	result := c.DB.First(&resource, id)
+	if result.Error != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "资源不存在"})
+		return
+	}
+
+	// 检查是否是资源的拥有者
+	if resource.UserID != userID.(uint) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权删除此资源"})
+		return
+	}
+
+	// 删除资源
+	if result := c.DB.Delete(&resource); result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除资源失败"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"message": "资源删除成功"})
+}
+
+// GetMyResources 获取当前用户的资源列表
+func (c *ResourceController) GetMyResources(ctx *gin.Context) {
+	// 从上下文获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		return
+	}
+
+	// 分页参数
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "10"))
+
+	// 构建查询
+	dbQuery := c.DB.Model(&models.Resource{}).
+		Where("user_id = ?", userID)
+
+	// 执行查询
+	var resources []models.Resource
+	var total int64
+
+	dbQuery.Count(&total)
+	dbQuery.Preload("User").Preload("Category").
+		Order("created_at DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&resources)
+
+	// 返回结果
+	ctx.JSON(http.StatusOK, gin.H{
+		"resources": resources,
+		"total":     total,
+		"page":      page,
+		"pageSize":  pageSize,
+	})
+}
+
 // SearchResources 搜索资源
 func (c *ResourceController) SearchResources(ctx *gin.Context) {
 	// 获取搜索参数
-	query := ctx.Query("q")
+	query := ctx.Query("query")
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "10"))
 	categoryID := ctx.Query("category")
 
 	// 构建查询
 	dbQuery := c.DB.Model(&models.Resource{}).
-		Where("status = ?", "approved").
-		Where("title LIKE ? OR description LIKE ?", "%"+query+"%", "%"+query+"%")
+		Where("status = ?", "approved")
+
+	// 关键词搜索
+	if query != "" {
+		query = strings.TrimSpace(query)
+		if len(query) < 2 {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": "搜索关键词至少需要2个字符"})
+			return
+		}
+		dbQuery = dbQuery.Where("title LIKE ? OR description LIKE ?", "%"+query+"%", "%"+query+"%")
+	}
 
 	// 分类过滤
 	if categoryID != "" {
@@ -486,6 +1008,9 @@ func (c *ResourceController) SearchResources(ctx *gin.Context) {
 		"total":     total,
 		"page":      page,
 		"pageSize":  pageSize,
+		"query":     ctx.Query("query"),                 // 返回原始查询关键词
+		"category":  ctx.Query("category"),              // 返回分类ID
+		"sort":      ctx.DefaultQuery("sort", "newest"), // 返回排序方式
 	})
 }
 
@@ -673,7 +1198,7 @@ func (c *ResourceController) DeleteResource(ctx *gin.Context) {
 
 	// 删除资源文件
 	ctxBg := context.Background()
-	err := c.MinioClient.RemoveObject(ctxBg, config.GetEnv("MINIO_BUCKET", "pool"), resource.FilePath, minio.RemoveObjectOptions{})
+	err := c.MinioClient.RemoveObject(ctxBg, config.GetEnv("MINIO_BUCKET", "resources"), resource.FilePath, minio.RemoveObjectOptions{})
 	if err != nil {
 		// 记录错误但继续删除数据库记录
 		log.Printf("删除文件失败: %v", err)
@@ -727,6 +1252,9 @@ func (c *ResourceController) GetUserResources(ctx *gin.Context) {
 		"total":     total,
 		"page":      page,
 		"pageSize":  pageSize,
+		"query":     ctx.Query("query"),                 // 返回原始查询关键词
+		"category":  ctx.Query("category"),              // 返回分类ID
+		"sort":      ctx.DefaultQuery("sort", "newest"), // 返回排序方式
 	})
 }
 
@@ -777,6 +1305,13 @@ func (c *ResourceController) DownloadFile(ctx *gin.Context) {
 	// 获取资源ID
 	id := ctx.Param("id")
 
+	// 验证用户权限
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
 	// 查询资源
 	var resource models.Resource
 	result := c.DB.First(&resource, id)
@@ -791,22 +1326,14 @@ func (c *ResourceController) DownloadFile(ctx *gin.Context) {
 		return
 	}
 
-	// 检查用户是否登录
-	userID, exists := ctx.Get("userID")
-	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+	// 检查资源所有者
+	if resource.UserID != userID {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权下载该资源"})
 		return
 	}
 
-	// 检查用户积分是否足够
-	var user models.User
-	c.DB.First(&user, userID)
-
-	// 如果不是资源拥有者且积分不足
-	if resource.UserID != userID.(uint) && user.Points < resource.PointsRequired {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "积分不足"})
-		return
-	}
+	// 增加下载次数
+	c.DB.Model(&resource).Update("download_count", gorm.Expr("download_count +?", 1))
 
 	// 获取文件
 	ctxBg := context.Background()
@@ -820,7 +1347,8 @@ func (c *ResourceController) DownloadFile(ctx *gin.Context) {
 	// 获取文件信息
 	stat, err := object.Stat()
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取文件信息失败"})
+		log.Printf("获取文件信息失败: %v, 文件路径: %s, 桶名: %s", err, resource.FilePath, config.GetEnv("MINIO_BUCKET", "pool"))
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "获取文件信息失败", "details": err.Error()})
 		return
 	}
 
@@ -832,43 +1360,6 @@ func (c *ResourceController) DownloadFile(ctx *gin.Context) {
 
 	// 将文件内容写入响应
 	ctx.DataFromReader(http.StatusOK, stat.Size, stat.ContentType, object, nil)
-
-	// 如果不是资源拥有者，扣除积分
-	if resource.UserID != userID.(uint) && resource.PointsRequired > 0 {
-		// 添加积分记录
-		pointRecord := models.PointRecord{
-			UserID:      userID.(uint),
-			Points:      -resource.PointsRequired,
-			Type:        "download",
-			ResourceID:  &resource.ID,
-			Description: "下载资源消费",
-			CreatedAt:   time.Now(),
-		}
-
-		c.DB.Create(&pointRecord)
-
-		// 更新用户积分
-		c.DB.Model(&models.User{}).Where("id = ?", userID).Update("points", gorm.Expr("points - ?", resource.PointsRequired))
-
-		// 给资源上传者增加积分（分成机制）
-		sharePoints := resource.PointsRequired / 2 // 上传者获得一半积分
-		if sharePoints > 0 {
-			// 添加积分记录
-			ownerPointRecord := models.PointRecord{
-				UserID:      resource.UserID,
-				Points:      sharePoints,
-				Type:        "share",
-				ResourceID:  &resource.ID,
-				Description: "资源被下载分成",
-				CreatedAt:   time.Now(),
-			}
-
-			c.DB.Create(&ownerPointRecord)
-
-			// 更新上传者积分
-			c.DB.Model(&models.User{}).Where("id = ?", resource.UserID).Update("points", gorm.Expr("points + ?", sharePoints))
-		}
-	}
 
 	// 更新下载次数
 	c.DB.Model(&resource).Update("download_count", gorm.Expr("download_count + 1"))

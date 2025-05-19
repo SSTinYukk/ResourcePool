@@ -55,6 +55,10 @@
                   <label for="website" class="block text-sm font-medium text-gray-700 mb-1">个人网站</label>
                   <InputText id="website" v-model="user.website" class="w-full" />
                 </div>
+                <div class="field mb-4">
+                  <label for="registerTime" class="block text-sm font-medium text-gray-700 mb-1">注册时间</label>
+                  <InputText id="registerTime" v-model="user.registerTime" class="w-full" disabled />
+                </div>
                 <Button label="保存修改" icon="pi pi-check" class="mt-4" @click="saveProfile" />
               </div>
             </div>
@@ -178,12 +182,42 @@ const userStore = useUserStore()
 const fileUpload = ref(null)
 
 // 用户信息
-const user = ref({
-  username: '张三',
-  email: 'zhangsan@example.com',
-  avatar: null,
-  bio: '前端开发工程师，热爱学习和分享技术知识。',
-  website: 'https://example.com'
+const user = ref({})
+
+// 获取用户资料
+const fetchUserProfile = async () => {
+  try {
+    const response = await fetch('/api/user/profile', {
+      headers: {
+        'Authorization': `Bearer ${userStore.token}`
+      }
+    })
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.message || '获取用户资料失败')
+    }
+    const data = await response.json()
+    if (!data.username || !data.email) {
+      throw new Error('API返回数据格式不正确')
+    }
+    user.value = {
+      ...data,
+      bio: data.bio || '',
+      website: data.website || '',
+      registerTime: data.registerTime || ''
+    }
+  } catch (error) {
+    console.error('获取用户资料错误:', error)
+    // 显示错误提示给用户
+    alert(error.message)
+  }
+}
+
+// 初始化获取数据
+onMounted(() => {
+  fetchUserProfile()
+  fetchUserResources()
+  fetchPointsHistory()
 })
 
 // 密码修改
@@ -193,62 +227,41 @@ const passwords = ref({
   confirm: ''
 })
 
-// 模拟用户资源数据
-const userResources = ref([
-  {
-    id: 1,
-    title: 'Vue 3完全指南',
-    category: '前端开发',
-    downloads: 156,
-    likes: 42,
-    createTime: new Date(2023, 7, 15)
-  },
-  {
-    id: 2,
-    title: 'Go语言实战笔记',
-    category: '后端开发',
-    downloads: 89,
-    likes: 23,
-    createTime: new Date(2023, 8, 5)
-  },
-  {
-    id: 3,
-    title: 'Docker容器化部署教程',
-    category: '运维',
-    downloads: 210,
-    likes: 56,
-    createTime: new Date(2023, 8, 20)
-  }
-])
+// 用户资源数据
+const userResources = ref([])
 
-// 模拟积分历史数据
-const pointsHistory = ref([
-  {
-    description: '上传资源《Vue 3完全指南》',
-    points: 50,
-    time: new Date(2023, 7, 15)
-  },
-  {
-    description: '回答问题获得奖励',
-    points: 15,
-    time: new Date(2023, 8, 3)
-  },
-  {
-    description: '每日登录奖励',
-    points: 5,
-    time: new Date(2023, 8, 10)
-  },
-  {
-    description: '下载资源《React Hooks详解》',
-    points: -10,
-    time: new Date(2023, 8, 12)
-  },
-  {
-    description: '论坛发帖被点赞',
-    points: 8,
-    time: new Date(2023, 8, 18)
+// 获取用户资源
+const fetchUserResources = async () => {
+  try {
+    const response = await fetch('/api/user/resources', {
+      headers: {
+        'Authorization': `Bearer ${userStore.token}`
+      }
+    })
+    if (!response.ok) throw new Error('获取用户资源失败')
+    userResources.value = await response.json()
+  } catch (error) {
+    console.error(error)
   }
-])
+}
+
+// 积分历史数据
+const pointsHistory = ref([])
+
+// 获取积分历史
+const fetchPointsHistory = async () => {
+  try {
+    const response = await fetch('/api/user/points/history', {
+      headers: {
+        'Authorization': `Bearer ${userStore.token}`
+      }
+    })
+    if (!response.ok) throw new Error('获取积分历史失败')
+    pointsHistory.value = await response.json()
+  } catch (error) {
+    console.error(error)
+  }
+}
 
 // 格式化日期
 function formatDate(date) {

@@ -1,8 +1,6 @@
 // API服务集合
 import axios from './axios'
 
-
-
 // 资源相关API
 export const resourceApi = {
   // 获取资源列表
@@ -91,33 +89,7 @@ export const forumApi = {
   }
 }
 
-// 聊天相关API
-export const chatApi = {
-  // 获取聊天历史列表
-  getChatHistories() {
-    return axios.get('/chat/histories')
-  },
-  // 获取聊天历史详情
-  getChatHistoryById(id) {
-    return axios.get(`/chat/histories/${id}`)
-  },
-  // 创建聊天历史
-  createChatHistory(data) {
-    return axios.post('/chat/histories', data)
-  },
-  // 更新聊天历史
-  updateChatHistory(id, data) {
-    return axios.put(`/chat/histories/${id}`, data)
-  },
-  // 删除聊天历史
-  deleteChatHistory(id) {
-    return axios.delete(`/chat/histories/${id}`)
-  },
-  // 发送消息
-  sendMessage(historyId, data) {
-    return axios.post(`/chat/histories/${historyId}/messages`, data)
-  }
-}
+
 
 // 积分相关API
 export const pointsApi = {

@@ -1,134 +1,42 @@
 package controllers
 
 import (
+	"context"
+	"fmt"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime"
+	"github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+	"github.com/volcengine/volcengine-go-sdk/volcengine"
 	"gorm.io/gorm"
 
+	"g/front/backend/config"
 	"g/front/backend/models"
 )
 
 // ChatController AI聊天控制器
 type ChatController struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	AIConfig config.AIConfig
 }
 
 // NewChatController 创建聊天控制器实例
 func NewChatController(db *gorm.DB) *ChatController {
-	return &ChatController{DB: db}
+	return &ChatController{
+		DB:       db,
+		AIConfig: config.GetAIConfig(),
+	}
 }
 
-// GetChatHistories 获取聊天历史列表
-func (c *ChatController) GetChatHistories(ctx *gin.Context) {
-	// 从上下文获取用户ID
+// CreateSession 创建新的聊天会话
+func (c *ChatController) CreateSession(ctx *gin.Context) {
+	// 从上下文中获取用户ID
 	userID, exists := ctx.Get("userID")
 	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
-		return
-	}
-
-	// 查询聊天历史
-	var histories []models.ChatHistory
-	c.DB.Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Find(&histories)
-
-	// 返回结果
-	ctx.JSON(http.StatusOK, histories)
-}
-
-// GetChatHistoryById 获取聊天历史详情
-func (c *ChatController) GetChatHistoryById(ctx *gin.Context) {
-	// 从上下文获取用户ID
-	userID, exists := ctx.Get("userID")
-	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
-		return
-	}
-
-	// 获取聊天历史ID
-	id := ctx.Param("id")
-
-	// 查询聊天历史
-	var history models.ChatHistory
-	result := c.DB.Where("id = ? AND user_id = ?", id, userID).First(&history)
-	if result.Error != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "聊天历史不存在"})
-		return
-	}
-
-	// 查询聊天消息
-	var messages []models.ChatMessage
-	c.DB.Where("chat_history_id = ?", id).
-		Order("created_at ASC").
-		Find(&messages)
-
-	// 返回结果
-	history.Messages = messages
-	ctx.JSON(http.StatusOK, history)
-}
-
-// CreateChatHistory 创建新的聊天历史
-func (c *ChatController) CreateChatHistory(ctx *gin.Context) {
-	// 从上下文获取用户ID
-	userID, exists := ctx.Get("userID")
-	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
-		return
-	}
-
-	// 绑定请求数据
-	var input struct {
-		Title string `json:"title"`
-	}
-
-	if err := ctx.ShouldBindJSON(&input); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 创建聊天历史
-	title := input.Title
-	if title == "" {
-		title = "新对话"
-	}
-
-	chatHistory := models.ChatHistory{
-		UserID:    userID.(uint),
-		Title:     title,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	if result := c.DB.Create(&chatHistory); result.Error != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建聊天历史失败"})
-		return
-	}
-
-	// 返回创建的聊天历史
-	ctx.JSON(http.StatusCreated, chatHistory)
-}
-
-// UpdateChatHistory 更新聊天历史
-func (c *ChatController) UpdateChatHistory(ctx *gin.Context) {
-	// 从上下文获取用户ID
-	userID, exists := ctx.Get("userID")
-	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
-		return
-	}
-
-	// 获取聊天历史ID
-	id := ctx.Param("id")
-
-	// 查询聊天历史
-	var history models.ChatHistory
-	result := c.DB.Where("id = ? AND user_id = ?", id, userID).First(&history)
-	if result.Error != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "聊天历史不存在"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
 		return
 	}
 
@@ -142,166 +50,269 @@ func (c *ChatController) UpdateChatHistory(ctx *gin.Context) {
 		return
 	}
 
-	// 更新聊天历史
-	updates := map[string]interface{}{
-		"title":      input.Title,
-		"updated_at": time.Now(),
+	// 创建新会话
+	session := models.ChatSession{
+		UserID:    userID.(uint),
+		Title:     input.Title,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
-	if result := c.DB.Model(&history).Updates(updates); result.Error != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "更新聊天历史失败"})
+	result := c.DB.Create(&session)
+	if result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "创建会话失败"})
 		return
 	}
 
-	// 返回更新后的聊天历史
-	c.DB.First(&history, id)
-	ctx.JSON(http.StatusOK, history)
+	// 返回创建的会话
+	ctx.JSON(http.StatusCreated, session)
 }
 
-// DeleteChatHistory 删除聊天历史
-func (c *ChatController) DeleteChatHistory(ctx *gin.Context) {
-	// 从上下文获取用户ID
+// GetSessions 获取用户的所有聊天会话
+func (c *ChatController) GetSessions(ctx *gin.Context) {
+	// 从上下文中获取用户ID
 	userID, exists := ctx.Get("userID")
 	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
 		return
 	}
 
-	// 获取聊天历史ID
-	id := ctx.Param("id")
+	// 分页参数
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "10"))
 
-	// 查询聊天历史
-	var history models.ChatHistory
-	result := c.DB.Where("id = ? AND user_id = ?", id, userID).First(&history)
-	if result.Error != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "聊天历史不存在"})
-		return
-	}
+	// 查询用户的会话
+	var sessions []models.ChatSession
+	var total int64
 
-	// 删除相关聊天消息
-	c.DB.Where("chat_history_id = ?", id).Delete(&models.ChatMessage{})
+	c.DB.Model(&models.ChatSession{}).Where("user_id = ?", userID).Count(&total)
+	c.DB.Where("user_id = ?", userID).
+		Order("updated_at DESC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&sessions)
 
-	// 删除聊天历史
-	if result := c.DB.Delete(&history); result.Error != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "删除聊天历史失败"})
-		return
-	}
-
-	ctx.JSON(http.StatusOK, gin.H{"message": "聊天历史已删除"})
+	// 返回会话列表
+	ctx.JSON(http.StatusOK, gin.H{
+		"sessions": sessions,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
 }
 
-// SendMessage 发送消息
+// GetSessionMessages 获取会话的消息历史
+func (c *ChatController) GetSessionMessages(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取会话ID
+	sessionID, err := strconv.Atoi(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的会话ID"})
+		return
+	}
+
+	// 验证会话所有权
+	var session models.ChatSession
+	result := c.DB.First(&session, sessionID)
+	if result.Error != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "会话不存在"})
+		return
+	}
+
+	if session.UserID != userID.(uint) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权访问此会话"})
+		return
+	}
+
+	// 分页参数
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "50"))
+
+	// 查询会话消息
+	var messages []models.ChatMessage
+	var total int64
+
+	c.DB.Model(&models.ChatMessage{}).Where("session_id = ?", sessionID).Count(&total)
+	c.DB.Where("session_id = ?", sessionID).
+		Order("created_at ASC").
+		Limit(pageSize).
+		Offset((page - 1) * pageSize).
+		Find(&messages)
+
+	// 返回消息列表
+	ctx.JSON(http.StatusOK, gin.H{
+		"messages": messages,
+		"total":    total,
+		"page":     page,
+		"pageSize": pageSize,
+	})
+}
+
+// DeleteSession 删除聊天会话
+func (c *ChatController) DeleteSession(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	// 获取会话ID
+	sessionID, err := strconv.Atoi(ctx.Param("id"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的会话ID"})
+		return
+	}
+
+	// 验证会话所有权
+	var session models.ChatSession
+	result := c.DB.First(&session, sessionID)
+	if result.Error != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "会话不存在"})
+		return
+	}
+
+	if session.UserID != userID.(uint) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权删除此会话"})
+		return
+	}
+
+	// 删除会话及其消息（依赖于外键级联删除）
+	c.DB.Delete(&session)
+
+	// 返回成功消息
+	ctx.JSON(http.StatusOK, gin.H{"message": "会话已删除"})
+}
+
+// SendMessage 发送消息并获取AI回复
 func (c *ChatController) SendMessage(ctx *gin.Context) {
-	// 从上下文获取用户ID
+	// 从上下文中获取用户ID
 	userID, exists := ctx.Get("userID")
 	if !exists {
-		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
-		return
-	}
-
-	// 获取聊天历史ID
-	id := ctx.Param("id")
-
-	// 查询聊天历史
-	var history models.ChatHistory
-	result := c.DB.Where("id = ? AND user_id = ?", id, userID).First(&history)
-	if result.Error != nil {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "聊天历史不存在"})
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
 		return
 	}
 
 	// 绑定请求数据
 	var input struct {
-		Content string `json:"content" binding:"required"`
+		SessionID uint   `json:"session_id" binding:"required,gt=0"`
+		Content   string `json:"content" binding:"required,min=1,max=1000"`
 	}
 
 	if err := ctx.ShouldBindJSON(&input); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "请求参数无效: " + err.Error()})
+		return
+	}
+
+	// 验证会话所有权
+	var session models.ChatSession
+	result := c.DB.First(&session, input.SessionID)
+	if result.Error != nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "会话不存在"})
+		return
+	}
+
+	if session.UserID != userID.(uint) {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "无权访问此会话"})
 		return
 	}
 
 	// 创建用户消息
 	userMessage := models.ChatMessage{
-		ChatHistoryID: history.ID,
-		Sender:        "user",
-		Content:       input.Content,
-		CreatedAt:     time.Now(),
+		SessionID: input.SessionID,
+		UserID:    userID.(uint),
+		Role:      "user",
+		Content:   input.Content,
+		CreatedAt: time.Now(),
 	}
 
-	if result := c.DB.Create(&userMessage); result.Error != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "发送消息失败"})
-		return
-	}
+	c.DB.Create(&userMessage)
 
-	// 更新聊天历史标题（如果是第一条消息）
-	var messageCount int64
-	c.DB.Model(&models.ChatMessage{}).Where("chat_history_id = ?", history.ID).Count(&messageCount)
+	// 获取会话历史消息（最近10条）
+	var history []models.ChatMessage
+	c.DB.Where("session_id = ?", input.SessionID).
+		Order("created_at DESC").
+		Limit(10).
+		Find(&history)
 
-	if messageCount == 1 {
-		title := input.Content
-		if len(title) > 20 {
-			title = title[:20] + "..."
-		}
-
-		c.DB.Model(&history).Updates(map[string]interface{}{
-			"title":      title,
-			"updated_at": time.Now(),
+	// 构建请求体
+	messages := []map[string]string{}
+	// 按时间正序添加历史消息
+	for i := len(history) - 1; i >= 0; i-- {
+		messages = append(messages, map[string]string{
+			"role":    history[i].Role,
+			"content": history[i].Content,
 		})
-	} else {
-		c.DB.Model(&history).Update("updated_at", time.Now())
 	}
 
-	// 生成AI回复
-	aiResponse := c.generateAIResponse(input.Content)
-
-	// 创建AI消息
-	aiMessage := models.ChatMessage{
-		ChatHistoryID: history.ID,
-		Sender:        "ai",
-		Content:       aiResponse,
-		CreatedAt:     time.Now(),
-	}
-
-	if result := c.DB.Create(&aiMessage); result.Error != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "AI回复失败"})
+	// 调用AI API获取回复
+	response, err := c.callAIAPI(messages)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "AI服务调用失败: " + err.Error()})
 		return
 	}
 
-	// 返回消息
-	ctx.JSON(http.StatusOK, gin.H{
-		"user_message": userMessage,
-		"ai_message":   aiMessage,
-	})
-}
-
-// generateAIResponse 生成AI回复（模拟）
-func (c *ChatController) generateAIResponse(message string) string {
-	// 这里是模拟回复，实际项目中应该调用AI服务
-	responses := map[string]string{
-		"什么是微处理器": "微处理器是一个集成电路芯片，它包含了计算机的中央处理单元(CPU)的功能。它是计算机系统的核心，负责执行指令、处理数据和控制系统的其他部分。微处理器通常包含算术逻辑单元(ALU)、控制单元、寄存器组和内部总线等组件。",
-
-		"8086CPU的寻址方式": "8086CPU的主要寻址方式包括：<br>1. <b>立即寻址</b>：操作数直接包含在指令中<br>2. <b>寄存器寻址</b>：操作数在CPU寄存器中<br>3. <b>直接寻址</b>：指令中给出操作数的有效地址<br>4. <b>寄存器间接寻址</b>：寄存器中存放操作数的有效地址<br>5. <b>基址寻址</b>：有效地址=基址寄存器内容+位移量<br>6. <b>变址寻址</b>：有效地址=变址寄存器内容+位移量<br>7. <b>基址变址寻址</b>：有效地址=基址寄存器内容+变址寄存器内容+位移量",
-
-		"中断向量表": "中断向量表是存储在内存中的一个表，包含了各种中断服务程序的入口地址。当中断发生时，CPU会根据中断类型查找中断向量表中对应的入口地址，然后跳转到该地址执行中断服务程序。<br><br>在8086/8088中，中断向量表位于内存的最低1KB(0000H-03FFH)，每个中断向量占4个字节，可以存储256个中断向量。每个向量的低2字节是偏移地址，高2字节是段地址。",
-
-		"微机系统的基本组成": "微机系统的基本组成包括：<br>1. <b>中央处理器(CPU)</b>：执行指令、处理数据<br>2. <b>存储器</b>：包括内存(RAM)和只读存储器(ROM)<br>3. <b>输入/输出设备</b>：键盘、显示器、打印机等<br>4. <b>总线系统</b>：连接各个部件，包括数据总线、地址总线和控制总线<br>5. <b>接口电路</b>：连接CPU与外部设备<br><br>这些组件协同工作，实现数据的输入、处理、存储和输出功能。",
-
-		"汇编语言的基本指令": "汇编语言的基本指令类型包括：<br>1. <b>数据传送指令</b>：MOV, PUSH, POP, XCHG等<br>2. <b>算术运算指令</b>：ADD, SUB, MUL, DIV, INC, DEC等<br>3. <b>逻辑运算指令</b>：AND, OR, XOR, NOT等<br>4. <b>移位指令</b>：SHL, SHR, ROL, ROR等<br>5. <b>转移指令</b>：JMP, JZ, JNZ, CALL, RET等<br>6. <b>串操作指令</b>：MOVS, CMPS, SCAS等<br>7. <b>处理器控制指令</b>：CLC, STC, CLI, STI等<br><br>这些指令是汇编语言编程的基础，通过组合这些指令可以实现各种复杂的功能。",
+	// 保存AI回复
+	aiMessage := models.ChatMessage{
+		SessionID: input.SessionID,
+		UserID:    userID.(uint),
+		Role:      "assistant",
+		Content:   response,
+		CreatedAt: time.Now(),
 	}
 
-	// 检查是否有预设回复
-	for key, response := range responses {
-		if containsIgnoreCase(message, key) {
-			return response
-		}
-	}
+	c.DB.Create(&aiMessage)
 
-	// 默认回复
-	return "关于\"\" + message + \"\"的问题，我的回答是：<br><br>这是一个关于微机原理的重要概念。在微机系统中，这涉及到处理器架构、指令集和系统总线等核心知识。<br><br>建议您查阅教材的相关章节，或者在论坛中与其他同学讨论这个问题，以获取更详细的解答。<br><br>您还有其他问题吗？"
+	// 更新会话最后更新时间
+	c.DB.Model(&session).Update("updated_at", time.Now())
+
+	// 返回AI回复
+	ctx.JSON(http.StatusOK, aiMessage)
 }
 
-// containsIgnoreCase 忽略大小写检查字符串是否包含子串
-func containsIgnoreCase(s, substr string) bool {
-	s, substr = strings.ToLower(s), strings.ToLower(substr)
-	return strings.Contains(s, substr)
+// callAIAPI 调用火山引擎AI API
+func (c *ChatController) callAIAPI(messages []map[string]string) (string, error) {
+	// 创建火山引擎客户端
+	client := arkruntime.NewClientWithApiKey(c.AIConfig.APIKey)
+	ctx := context.Background()
+
+	// 转换消息格式
+	var sdkMessages []*model.ChatCompletionMessage
+	for _, msg := range messages {
+		sdkMessages = append(sdkMessages, &model.ChatCompletionMessage{
+			Role: *volcengine.String(msg["role"]),
+			Content: &model.ChatCompletionMessageContent{
+				StringValue: volcengine.String(msg["content"]),
+			},
+		})
+	}
+
+	// 构建请求
+	req := model.ChatCompletionRequest{
+		Model:    c.AIConfig.ModelID,
+		Messages: sdkMessages,
+	}
+
+	// 调用API
+	resp, err := client.CreateChatCompletion(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("API调用失败: %v", err)
+	}
+
+	// 获取响应内容
+	if resp.Choices == nil || len(resp.Choices) == 0 {
+		return "", fmt.Errorf("无效的API响应格式: 缺少choices字段")
+	}
+
+	// if resp.Choices[0].Message == nil || resp.Choices[0].Message.Content == nil || resp.Choices[0].Message.Content.StringValue == nil {
+	// 	return "", fmt.Errorf("无效的API响应格式: 缺少message或content字段")
+	// }
+
+	return *resp.Choices[0].Message.Content.StringValue, nil
 }

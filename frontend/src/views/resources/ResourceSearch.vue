@@ -1,26 +1,59 @@
 <template>
   <div class="resource-search">
-    <div class="search-container">
-      <input 
-        v-model="searchQuery" 
-        type="text" 
-        placeholder="搜索资源..."
-        @keyup.enter="searchResources"
-      />
-      <button @click="searchResources">搜索</button>
+    <div class="search-container bg-white p-4 rounded-lg shadow-sm mb-6">
+      <div class="flex flex-col md:flex-row gap-4">
+        <div class="flex-1">
+          <div class="relative">
+            <input 
+              v-model="searchQuery" 
+              type="text" 
+              placeholder="搜索资源..."
+              @keyup.enter="searchResources"
+              class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div class="absolute left-3 top-2.5 text-gray-400">
+              <i class="pi pi-search"></i>
+            </div>
+          </div>
+        </div>
+        <button 
+          @click="searchResources"
+          class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+        >
+          搜索
+        </button>
+      </div>
     </div>
     
     <div class="filter-container bg-white p-4 rounded-lg shadow-sm mb-6">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">分类</label>
-          <Dropdown
-            v-model="selectedCategory"
-            :options="categories"
-            optionLabel="name"
+      <div class="flex flex-col md:flex-row gap-4">
+        <div class="flex gap-4">
+          <MultiSelect 
+            v-model="selectedCategories" 
+            :options="categories" 
+            optionLabel="name" 
             optionValue="id"
-            placeholder="所有分类"
-            class="w-full"
+            placeholder="选择分类"
+            display="chip"
+            class="w-full md:w-80"
+          />
+          
+          <Dropdown 
+            v-model="sortBy" 
+            :options="sortOptions" 
+            optionLabel="label" 
+            optionValue="value"
+            placeholder="排序方式"
+            class="w-full md:w-80"
+          />
+          
+          <Dropdown 
+            v-model="priceFilter" 
+            :options="priceOptions" 
+            optionLabel="label" 
+            optionValue="value"
+            placeholder="价格筛选"
+            class="w-full md:w-80"
           />
         </div>
         
@@ -106,16 +139,33 @@ import axios from '../../api/axios'
 export default {
   setup() {
     const router = useRouter()
-    const searchQuery = ref('')
-    const selectedCategory = ref(null)
-    const selectedTags = ref([])
-    const sortBy = ref('newest')
-    const priceRange = ref('all')
-    const resources = ref([])
-    const categories = ref([])
-    const currentPage = ref(1)
-    const pageSize = ref(10)
-    const total = ref(0)
+    const resources = ref([]);
+    const categories = ref([]);
+    const loading = ref(true);
+
+    const searchQuery = ref('');
+    const selectedCategories = ref([]);
+    const selectedTags = ref([]);
+    const sortBy = ref('created_at:desc');
+    const priceRange = ref('all');
+    const total = ref(0);
+
+    const sortOptions = ref([
+      { label: '最新上传', value: 'created_at:desc' },
+      { label: '下载最多', value: 'download_count:desc' },
+      { label: '标题 A-Z', value: 'title:asc' },
+      { label: '评分最高', value: 'rating:desc' }
+    ]);
+
+    const priceOptions = ref([
+      { label: '全部', value: 'all' },
+      { label: '免费', value: 'free' },
+      { label: '付费', value: 'paid' }
+    ]);
+
+    const currentPage = ref(1);
+    const totalPages = ref(1);
+    const pageSize = 12;
     
     const fetchCategories = async () => {
       try {
@@ -130,12 +180,12 @@ export default {
       try {
         const params = {
           q: searchQuery.value.trim(),
-          category_id: selectedCategory.value,
+          category_id: selectedCategories.value.join(','),
           tags: selectedTags.value.join(','),
           sort: sortBy.value,
           price_range: priceRange.value,
           page: currentPage.value,
-          pageSize: pageSize.value
+          page_size: pageSize
         }
         
         const response = await axios.get('/resources/search', { params })
@@ -158,8 +208,10 @@ export default {
     
     return {
       searchQuery,
-      selectedCategory,
+      selectedCategories,
+      selectedTags,
       sortBy,
+      priceRange,
       resources,
       categories,
       currentPage,
@@ -167,7 +219,7 @@ export default {
       total,
       searchResources,
       goToPage,
-      totalPages: computed(() => Math.ceil(total.value / pageSize.value))
+      totalPages: computed(() => Math.ceil(total.value / pageSize))
     }
   }
 }

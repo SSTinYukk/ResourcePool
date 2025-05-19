@@ -66,9 +66,12 @@ import InputText from 'primevue/inputtext'
 import Dropdown from 'primevue/dropdown'
 import Editor from 'primevue/editor'
 import Button from 'primevue/button'
+import { useToast } from 'primevue/usetoast'
+import { forumApi } from '@/api/forum'
 
 const router = useRouter()
 const userStore = useUserStore()
+const toast = useToast()
 
 const form = ref({
   title: '',
@@ -76,29 +79,58 @@ const form = ref({
   content: ''
 })
 
-const categories = ref([
-  { id: 1, name: '前端开发' },
-  { id: 2, name: '后端开发' },
-  { id: 3, name: '移动开发' },
-  { id: 4, name: '数据库' },
-  { id: 5, name: '运维部署' },
-])
+const categories = ref([])
+
+const loadCategories = async () => {
+  try {
+    categories.value = [
+      { id: 1, name: '技术讨论' },
+      { id: 2, name: '学习资源' },
+      { id: 3, name: '经验分享' },
+      { id: 4, name: '求助问答' },
+      { id: 5, name: '活动公告' }
+    ]
+  } catch (error) {
+    console.error('获取分类失败:', error)
+    toast.add({ severity: 'error', summary: '错误', detail: '获取分类失败', life: 3000 })
+  }
+}
 
 const submitting = ref(false)
 
 const submitTopic = async () => {
   try {
     submitting.value = true
-    // TODO: 替换为实际API调用
-    console.log('提交主题:', form.value)
     
-    // 模拟API调用延迟
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    // 表单验证
+    if (!form.value.title || !form.value.category || !form.value.content) {
+      throw new Error('请填写所有必填字段')
+    }
     
-    // 提交成功后跳转到主题详情页
-    router.push('/forum/topics/123')
+    // 调用API创建主题
+    const response = await forumApi.createTopic({
+      title: form.value.title,
+      category_id: form.value.category,
+      content: form.value.content,
+      author_id: userStore.user.id
+    })
+    
+    // 提交成功后跳转到新创建的主题
+    if (response && response.data && response.data.id) {
+      router.push(`/forum/topic/${response.data.id}`)
+    } else {
+      throw new Error('创建主题失败，请稍后重试')
+    }
   } catch (error) {
     console.error('提交主题失败:', error)
+    // 显示错误提示
+    if (error.response && error.response.data && error.response.data.message) {
+      toast.add({ severity: 'error', summary: '错误', detail: error.response.data.message, life: 3000 })
+    } else if (error.message) {
+      toast.add({ severity: 'error', summary: '错误', detail: error.message, life: 3000 })
+    } else {
+      toast.add({ severity: 'error', summary: '错误', detail: '提交主题失败，请稍后重试', life: 3000 })
+    }
   } finally {
     submitting.value = false
   }
@@ -107,6 +139,8 @@ const submitTopic = async () => {
 onMounted(() => {
   if (!userStore.isLoggedIn) {
     router.push('/login')
+  } else {
+    loadCategories()
   }
 })
 </script>

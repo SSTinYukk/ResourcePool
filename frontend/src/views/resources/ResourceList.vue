@@ -30,16 +30,22 @@
         </div>
         
         <div class="flex gap-4">
-          <MultiSelect 
-            v-model="selectedCategories" 
+          <Dropdown 
+            v-model="selectedCategory" 
             :options="categories" 
             optionLabel="name" 
             optionValue="id"
             placeholder="选择分类"
-            display="chip"
             class="w-full md:w-80"
             @change="loadResources"
-          />
+          >
+            <template #value="slotProps">
+              <div v-if="slotProps.value" class="flex items-center">
+                <span>{{ getCategoryName(slotProps.value) }}</span>
+              </div>
+              <span v-else>选择分类</span>
+            </template>
+          </Dropdown>
           
           <Dropdown 
             v-model="sortBy" 
@@ -99,7 +105,14 @@
             </span>
           </div>
           
-          <p class="text-gray-600 text-sm mb-4 line-clamp-2">{{ resource.description }}</p>
+          <div class="mb-4">
+  <div v-if="resource.tags && resource.tags.length > 0" class="flex flex-wrap gap-1 mb-2">
+    <span v-for="tag in resource.tags" :key="tag" class="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded-full">
+      {{ tag }}
+    </span>
+  </div>
+  <p class="text-gray-600 text-sm line-clamp-2">{{ resource.description }}</p>
+</div>
           
           <div class="flex justify-between items-center text-sm text-gray-500">
             <div class="flex items-center">
@@ -179,7 +192,7 @@ const categories = ref([]);
 const loading = ref(true);
 
 const searchQuery = ref('');
-const selectedCategories = ref([]);
+const selectedCategory = ref('');
 const sortBy = ref('created_at:desc');
 const priceFilter = ref('all');
 
@@ -214,8 +227,8 @@ const loadResources = async () => {
       sort: sortBy.value
     };
     
-    if (selectedCategories.value.length > 0) {
-      params.category_ids = selectedCategories.value.join(',');
+    if (selectedCategory.value) {
+      params.category = selectedCategory.value;
     }
     
     if (priceFilter.value === 'free') {
@@ -265,10 +278,21 @@ const loadResources = async () => {
 const loadCategories = async () => {
   try {
     const response = await resourceApi.getCategories();
-    categories.value = response.data;
+    // 添加一个"全部"选项
+    categories.value = [
+      { id: '', name: '全部分类' },
+      ...response.data
+    ];
   } catch (error) {
     console.error('获取分类失败:', error);
   }
+};
+
+// 根据分类ID获取分类名称
+const getCategoryName = (categoryId) => {
+  if (!categoryId) return '全部分类';
+  const category = categories.value.find(c => c.id === categoryId);
+  return category ? category.name : '未知分类';
 };
 
 const searchResources = () => {

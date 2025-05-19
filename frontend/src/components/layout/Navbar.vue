@@ -5,8 +5,8 @@
         <!-- Logo和网站名称 -->
         <div class="flex items-center space-x-2">
           <router-link to="/" class="flex items-center">
-            <span class="text-xl font-bold text-blue-600">V1-BK</span>
-            <span class="ml-2 text-gray-600 text-sm">知识共享平台</span>
+            <span class="text-xl font-bold text-blue-600">微机原理</span>
+            <span class="ml-2 text-gray-600 text-sm">开放式资源池</span>
           </router-link>
         </div>
 
@@ -32,8 +32,8 @@
             <Button icon="pi pi-bell" class="p-button-text p-button-rounded" badge="3" badgeClass="p-badge-danger" />
             <Menu ref="menu" :model="userMenuItems" :popup="true" />
             <Avatar 
-              :image="userStore.user?.avatar || undefined" 
-              :label="!userStore.user?.avatar ? userStore.user?.username?.charAt(0).toUpperCase() : undefined"
+              :image="userAvatar || undefined"
+              :label="!userAvatar ? userInitial : undefined"
               shape="circle" 
               class="cursor-pointer" 
               @click="toggleUserMenu"
@@ -71,13 +71,20 @@
         <router-link to="/resources/upload" class="text-gray-700 hover:text-blue-600 transition duration-300" v-if="userStore.isLoggedIn">
           上传资源
         </router-link>
-        <router-link to="/chat" class="text-gray-700 hover:text-blue-600 transition duration-300">
-          聊天
+        <router-link to="/chat" class="text-gray-700 hover:text-blue-600 transition duration-300" v-if="userStore.isLoggedIn">
+          AI助理
         </router-link>
+
         <Divider />
         <template v-if="userStore.isLoggedIn">
-          <router-link to="/profile" class="text-gray-700 hover:text-blue-600 transition duration-300">
+          <router-link to="/user/profile" class="text-gray-700 hover:text-blue-600 transition duration-300">
             个人资料
+          </router-link>
+          <router-link to="/user/resources" class="text-gray-700 hover:text-blue-600 transition duration-300">
+            我的资源
+          </router-link>
+          <router-link to="/user/favorites" class="text-gray-700 hover:text-blue-600 transition duration-300">
+            我的收藏
           </router-link>
           <Button label="退出登录" class="p-button-text p-button-danger" @click="logout" />
         </template>
@@ -95,7 +102,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import Button from 'primevue/button'
@@ -103,22 +110,78 @@ import Avatar from 'primevue/avatar'
 import Menu from 'primevue/menu'
 import Sidebar from 'primevue/sidebar'
 import Divider from 'primevue/divider'
+import axios from 'axios'
 
 const router = useRouter()
 const userStore = useUserStore()
 const menu = ref(null)
 const mobileMenuVisible = ref(false)
+const userAvatar = ref('')
+const userInitial = ref('')
+
+onMounted(async () => {
+  if (userStore.isLoggedIn) {
+    try {
+      const response = await axios.get('/api/user/profile', {
+        headers: {
+          'Authorization': `Bearer ${userStore.token}`
+        }
+      })
+      
+      // 处理头像URL
+      if (response.data.avatar) {
+        try {
+          // 直接使用服务器返回的头像URL
+          console.log('获取到头像URL:', response.data.avatar)
+          userAvatar.value = response.data.avatar
+          
+          // 测试图片加载
+          const testImg = new Image()
+          testImg.src = response.data.avatar
+          testImg.onerror = () => {
+            console.error('头像图片加载失败，使用默认头像')
+            setDefaultAvatar(response.data.username)
+          }
+        } catch (error) {
+          console.error('头像处理出错:', error)
+          setDefaultAvatar(response.data.username)
+        }
+      } else {
+        console.log('未获取到头像，使用默认头像')
+        setDefaultAvatar(response.data.username)
+      }
+      
+      // 设置用户首字母
+      userInitial.value = response.data.username?.charAt(0).toUpperCase() || ''
+    } catch (error) {
+      console.error('Failed to fetch user profile:', error)
+      userAvatar.value = ''
+      userInitial.value = ''
+    }
+    
+    function setDefaultAvatar(username) {
+      userAvatar.value = 'https://ui-avatars.com/api/?name=' + 
+        encodeURIComponent(username || '') + 
+        '&background=random&color=fff&size=128'
+    }
+  }
+})
 
 const userMenuItems = [
   {
     label: '个人资料',
     icon: 'pi pi-user',
-    command: () => router.push('/profile')
+    command: () => router.push('/user/profile')
   },
   {
     label: '我的资源',
     icon: 'pi pi-file',
-    command: () => router.push('/my-resources')
+    command: () => router.push('/user/resources')
+  },
+  {
+    label: '我的收藏',
+    icon: 'pi pi-bookmark',
+    command: () => router.push('/user/favorites')
   },
   {
     label: '我的积分',

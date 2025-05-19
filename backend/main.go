@@ -79,9 +79,15 @@ func main() {
 	_ = utils.NewMinioUtils(minioClient)
 
 	// 注册控制器
-	userController := controllers.NewUserController(db)
+	userController := controllers.NewUserController(db, minioClient)
 	resourceController := controllers.NewResourceController(db, minioClient)
-	forumController := controllers.NewForumController(db)
+	// 初始化Redis客户端
+	redisClient, err := config.InitRedisClient()
+	if err != nil {
+		log.Fatalf("Redis客户端初始化失败: %v", err)
+	}
+
+	forumController := controllers.NewForumController(db, redisClient)
 	chatController := controllers.NewChatController(db)
 	pointsController := controllers.NewPointsController(db)
 	adminController := controllers.NewAdminController(db)

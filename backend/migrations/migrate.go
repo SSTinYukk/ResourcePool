@@ -20,9 +20,12 @@ func RunMigrations(db *gorm.DB) {
 		&models.PointRecord{},
 		&models.Topic{},
 		&models.Reply{},
-		&models.ChatHistory{},
+		&models.ChatSession{},
 		&models.ChatMessage{},
 		&models.Comment{},
+		&models.UserFavorite{},
+		&models.UserLike{},
+		&models.UserTopicFavorite{},
 	)
 
 	if err != nil {

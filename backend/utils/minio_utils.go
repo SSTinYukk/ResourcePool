@@ -62,7 +62,18 @@ func (m *MinioUtils) UploadFile(file *multipart.FileHeader, directory string) (s
 
 // GetFileURL 获取文件的临时URL
 func (m *MinioUtils) GetFileURL(fileName string, expires time.Duration) (string, error) {
-	// 生成临时URL
+	// 检查文件是否存在
+	_, err := m.Client.StatObject(context.Background(), m.BucketName, fileName, minio.StatObjectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("文件不存在: %v", err)
+	}
+
+	// 如果是avatars存储桶，直接返回公开URL
+	if m.BucketName == "avatars" {
+		return fmt.Sprintf("%s/%s/%s", config.GetEnv("MINIO_ENDPOINT", "47.121.210.209:9000"), m.BucketName, fileName), nil
+	}
+
+	// 其他存储桶生成临时URL
 	presignedURL, err := m.Client.PresignedGetObject(
 		context.Background(),
 		m.BucketName,

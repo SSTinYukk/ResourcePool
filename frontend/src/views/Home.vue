@@ -3,8 +3,8 @@
     <!-- 欢迎横幅 -->
     <div class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-12 px-4 rounded-lg shadow-lg mb-8">
       <div class="max-w-4xl mx-auto">
-        <h1 class="text-3xl md:text-4xl font-bold mb-4">欢迎来到 V1-BK 知识共享平台</h1>
-        <p class="text-xl mb-6">分享知识，共同成长。探索高质量资源，参与社区讨论，提升专业技能。</p>
+        <h1 class="text-3xl md:text-4xl font-bold mb-4">欢迎来到 微机原理资源池</h1>
+        <p class="text-xl mb-6">分享微机原理知识，共同成长。探索高质量资源，参与社区讨论，提升专业技能。</p>
         <div class="flex flex-wrap gap-4">
           <router-link to="/resources" class="bg-white text-blue-600 hover:bg-blue-50 px-6 py-2 rounded-md font-medium transition-colors">
             浏览资源

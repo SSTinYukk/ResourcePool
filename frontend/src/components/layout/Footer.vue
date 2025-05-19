@@ -4,7 +4,7 @@
       <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
         <div>
           <h3 class="text-lg font-semibold text-gray-800 mb-3">关于我们</h3>
-          <p class="text-gray-600 text-sm">V1-BK知识共享平台致力于为用户提供高质量的学习资源和交流环境，促进知识的分享与创新。</p>
+          <p class="text-gray-600 text-sm">微机原理资源池致力于为用户提供高质量的学习资源和交流环境，促进知识的分享与创新。</p>
         </div>
         
         <div>
@@ -63,7 +63,7 @@
       </div>
       
       <div class="border-t border-gray-200 mt-6 pt-6 text-center">
-        <p class="text-gray-600 text-sm">&copy; {{ new Date().getFullYear() }} V1-BK知识共享平台. 保留所有权利.</p>
+        <p class="text-gray-600 text-sm">&copy; {{ new Date().getFullYear() }} 微机原理资源池. 保留所有权利.</p>
       </div>
     </div>
   </footer>

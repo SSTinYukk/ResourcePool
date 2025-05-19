@@ -25,16 +25,16 @@
           <div class="mt-4 md:mt-0 flex space-x-2">
             <Button label="下载" icon="pi pi-download" class="p-button-outlined p-button-light" @click="downloadResource" />
             <Button 
-              :icon="resource.isLiked ? 'pi pi-thumbs-up-fill' : 'pi pi-thumbs-up'" 
+              :icon="likeStatus ? 'pi pi-thumbs-up-fill' : 'pi pi-thumbs-up'" 
               class="p-button-outlined p-button-light" 
               @click="toggleLike"
-              v-tooltip.top="resource.isLiked ? '取消点赞' : '点赞'"
+              v-tooltip.top="likeStatus ? '取消点赞' : '点赞'"
             />
             <Button 
-              :icon="resource.isFavorited ? 'pi pi-star-fill' : 'pi pi-star'" 
-              class="p-button-outlined p-button-light" 
+              :icon="isFavorited ? 'pi pi-star-fill' : 'pi pi-star'" 
+              :class="isFavorited ? 'p-button-outlined p-button-warning' : 'p-button-outlined p-button-light'"
               @click="toggleFavorite"
-              v-tooltip.top="resource.isFavorited ? '取消收藏' : '收藏'"
+              v-tooltip.top="isFavorited ? '取消收藏' : '收藏'"
             />
             <Button 
               icon="pi pi-share-alt" 
@@ -81,11 +81,11 @@
               <ul class="space-y-2">
                 <li class="flex justify-between">
                   <span class="text-gray-600">文件大小：</span>
-                  <span class="font-medium">{{ resource.file_size }}</span>
+                  <span class="font-medium">{{ formatFileSize(resource.file_size) }}</span>
                 </li>
                 <li class="flex justify-between">
                   <span class="text-gray-600">文件格式：</span>
-                  <span class="font-medium">{{ resource.file_type }}</span>
+                  <span class="font-medium">{{ formatFileType(resource.file_type) }}</span>
                 </li>
                 <li class="flex justify-between">
                   <span class="text-gray-600">上传时间：</span>
@@ -93,7 +93,7 @@
                 </li>
                 <li class="flex justify-between">
                   <span class="text-gray-600">最后更新：</span>
-                  <span class="font-medium">{{ formatDate(resource.updated_at) }}</span>
+                  <span class="font-medium">{{ resource.updated_at ? formatDate(resource.updated_at) : '无更新记录' }}</span>
                 </li>
               </ul>
             </template>
@@ -118,7 +118,16 @@
                           <span class="font-medium">{{ comment.username }}</span>
                           <span class="text-gray-500 text-sm ml-2">{{ formatDate(comment.time) }}</span>
                         </div>
-                        <Rating v-model="comment.rating" :readonly="true" :cancel="false" />
+                        <div class="flex items-center">
+                          <Rating v-model="comment.rating" :readonly="true" :cancel="false" />
+                          <Button 
+                            v-if="comment.userId === currentUser?.id"
+                            icon="pi pi-trash" 
+                            class="p-button-text p-button-danger ml-2" 
+                            @click="deleteComment(comment.id, index)"
+                            v-tooltip.top="'删除评论'"
+                          />
+                        </div>
                       </div>
                       <p class="mt-2">{{ comment.content }}</p>
                     </div>
@@ -254,13 +263,17 @@ import Rating from 'primevue/rating'
 import Dialog from 'primevue/dialog'
 import Textarea from 'primevue/textarea'
 import InputText from 'primevue/inputtext'
+import ProgressSpinner from 'primevue/progressspinner'
+import Toast from 'primevue/toast'
+import Tooltip from 'primevue/tooltip'
+import { useToast } from 'primevue/usetoast'
+const toast = useToast()
 
 const route = useRoute()
 const router = useRouter()
 const showCommentDialog = ref(false)
 const showShareDialog = ref(false)
 const shareLink = ref('')
-
 // 新评论
 const newComment = ref({
   rating: 5,
@@ -269,10 +282,30 @@ const newComment = ref({
 
 // 资源数据
 const resource = ref({})
+const currentUser = JSON.parse(localStorage.getItem('user'))
 
 // 加载状态
 const isLoading = ref(true)
 const error = ref(null)
+
+// 点赞状态
+const likeStatus = ref(false)
+
+// 初始化点赞状态
+const initLikeStatus = async () => {
+  try {
+    const response = await axios.get(`/api/resources/${route.params.id}/like-status`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    })
+    likeStatus.value = response.data.isLiked
+  } catch (error) {
+    console.error('获取点赞状态失败:', error)
+    likeStatus.value = false
+    resource.value.likes = 0
+  }
+}
 
 // 相关资源
 const relatedResources = ref([
@@ -315,36 +348,214 @@ function formatDate(date) {
   }
 }
 
+// 格式化文件大小
+function formatFileSize(bytes) {
+  if (!bytes) return '未知大小';
+  
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let size = Number(bytes);
+  let unitIndex = 0;
+  
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  
+  return `${size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+// 格式化文件类型
+function formatFileType(mimeType) {
+  const typeMap = {
+    'application/msword': 'Word文档',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word文档',
+    'application/vnd.ms-excel': 'Excel表格',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel表格',
+    'application/vnd.ms-powerpoint': 'PPT演示',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPT演示',
+    'application/pdf': 'PDF文档',
+    'text/plain': '文本文件',
+    'application/zip': '压缩文件',
+    'application/x-rar-compressed': '压缩文件'
+  };
+  
+  return typeMap[mimeType] || mimeType || '未知类型';
+}
+
 // 下载资源
-function downloadResource() {
-  // 实际应用中应调用API处理下载逻辑
-  alert(`即将下载资源：${resource.value.title}，消耗${resource.value.pointsCost}积分`)
+async function downloadResource() {
+  try {
+    const response = await axios.get(`/api/download/${route.params.id}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      },
+      baseURL: 'http://localhost:8080'
+    })
+    
+    if (response.data.url) {
+      // 创建隐藏的a标签触发下载
+      const link = document.createElement('a')
+      link.href = response.data.url
+      link.download = resource.value.title || 'download'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // 更新下载次数
+      resource.value.download_count += 1
+    }
+  } catch (error) {
+    console.error('下载失败:', error)
+    toast.add({
+      severity: 'error',
+      summary: '错误',
+      detail: '下载失败: ' + (error.response?.data?.message || error.message),
+      life: 5000
+    })
+  }
 }
 
 // 点赞/取消点赞
 async function toggleLike() {
   try {
-    const response = await axios.post(`/api/resources/${resource.value.id}/like`);
-    resource.value.isLiked = response.data.isLiked;
-    resource.value.likes = response.data.likes;
+    let response;
+    const wasLiked = likeStatus.value;
+    console.log('当前点赞状态:', wasLiked);
+    
+    // 立即更新UI状态
+    likeStatus.value = !wasLiked;
+    resource.value.likes = wasLiked ? resource.value.likes - 1 : resource.value.likes + 1;
+    
+    try {
+      if (wasLiked) {
+        response = await axios.delete(`/api/resources/${resource.value.id}/dislike`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          },
+          baseURL: 'http://localhost:8080'
+        });
+      } else {
+        response = await axios.post(`/api/resources/${resource.value.id}/like`, {}, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          },
+          baseURL: 'http://localhost:8080'
+        });
+      }
+      
+      console.log('API点赞响应原始数据:', response.data);
+      
+      // 确保最终状态与API响应一致，兼容多种可能的响应格式
+      if (response.data.isLiked !== undefined) {
+        likeStatus.value = response.data.isLiked;
+      } else if (response.data.is_liked !== undefined) {
+        likeStatus.value = response.data.is_liked;
+      } else if (typeof response.data === 'boolean') {
+        likeStatus.value = response.data;
+      } else {
+        console.warn('无法从API响应中确定点赞状态，保持当前UI状态');
+      }
+      
+      console.log('更新后的点赞状态:', likeStatus.value);
+      
+      toast.add({
+        severity: 'success',
+        summary: '成功',
+        detail: likeStatus.value ? '已点赞' : '已取消点赞',
+        life: 3000
+      });
+    } catch (error) {
+      console.error('点赞操作失败:', error);
+      // 出错时恢复原状态
+      likeStatus.value = wasLiked;
+      
+      toast.add({
+        severity: 'error',
+        summary: '错误',
+        detail: '点赞操作失败: ' + (error.response?.data?.error || error.response?.data?.message || error.message),
+        life: 5000
+      });
+    }
   } catch (error) {
     console.error('点赞操作失败:', error);
+    // 出错时恢复原状态
+    likeStatus.value = !likeStatus.value;
+    
+    toast.add({
+      severity: 'error',
+      summary: '错误',
+      detail: '点赞操作失败: ' + (error.response?.data?.error || error.response?.data?.message || error.message),
+      life: 5000
+    });
   }
 }
+
+// 收藏状态
+const isFavorited = ref(false);
 
 // 收藏/取消收藏
 async function toggleFavorite() {
   try {
-    const response = await axios.post(`/api/resources/${resource.value.id}/favorite`);
-    resource.value.isFavorited = response.data.isFavorited;
+    let response;
+    const wasFavorited = isFavorited.value;
+    console.log('当前收藏状态:', wasFavorited);
+    
+    // 立即更新UI状态
+    isFavorited.value = !wasFavorited;
+    
+    if (wasFavorited) {
+      response = await axios.delete(`/api/resources/${resource.value.id}/favorite`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+    } else {
+      response = await axios.post(`/api/resources/${resource.value.id}/favorite`, {}, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+    }
+    
+    console.log('API收藏响应原始数据:', response.data);
+    
+    // 确保最终状态与API响应一致，兼容多种可能的响应格式
+    if (response.data.isFavorited !== undefined) {
+      isFavorited.value = response.data.isFavorited;
+    } else if (response.data.is_favorite !== undefined) {
+      isFavorited.value = response.data.is_favorite;
+    } else if (typeof response.data === 'boolean') {
+      isFavorited.value = response.data;
+    } else {
+      console.warn('无法从API响应中确定收藏状态，保持当前UI状态');
+    }
+    
+    console.log('更新后的收藏状态:', isFavorited.value);
+    
+    toast.add({
+      severity: 'success',
+      summary: '成功',
+      detail: isFavorited.value ? '已添加到收藏' : '已从收藏中移除',
+      life: 3000
+    });
   } catch (error) {
     console.error('收藏操作失败:', error);
+    // 出错时恢复原状态
+    isFavorited.value = !isFavorited.value;
+    toast.add({
+      severity: 'error',
+      summary: '错误',
+      detail: '收藏操作失败: ' + (error.response?.data?.error || error.response?.data?.message || error.message),
+      life: 5000
+    });
   }
 }
 
 // 分享资源
 function shareResource() {
-  shareLink.value = `https://v1bk.com/resources/${resource.value.id}`
+  shareLink.value = `https://localhost:5173/resources/${resource.value.id}`
   showShareDialog.value = true
 }
 
@@ -371,6 +582,34 @@ function navigateToResource(resourceId) {
 }
 
 // 提交评论
+async function deleteComment(commentId, index) {
+  try {
+    // 确保使用正确的评论ID格式
+    await axios.delete(`/api/resources/${resource.value.id}/comments/${commentId}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`
+      }
+    })
+    
+    resource.value.comments.splice(index, 1)
+    
+    toast.add({
+      severity: 'success',
+      summary: '成功',
+      detail: '评论已删除',
+      life: 3000
+    })
+  } catch (error) {
+    console.error('删除评论失败:', error)
+    toast.add({
+      severity: 'error',
+      summary: '错误',
+      detail: '删除评论失败: ' + (error.response?.data?.message || error.message),
+      life: 5000
+    })
+  }
+}
+
 async function submitComment() {
   if (!newComment.value.content.trim()) {
     alert('评论内容不能为空')
@@ -388,7 +627,21 @@ async function submitComment() {
     })
     
     // 更新前端评论列表
-    resource.value.comments.unshift(response.data.comment)
+    if (!resource.value.comments) {
+      resource.value.comments = []
+    }
+    
+    // 处理后端返回的评论数据
+    const comment = response.data.comment || response.data;
+    resource.value.comments.unshift({
+      id: comment.ID || comment.id,
+      content: comment.Content || comment.content,
+      rating: comment.Rating || comment.rating,
+      userId: comment.UserID || comment.user_id,
+      userAvatar: comment.User?.avatar || comment.user?.avatar || currentUser?.avatar,
+      username: comment.User?.username || comment.user?.username || currentUser?.username,
+      time: comment.CreatedAt || comment.Time || comment.created_at
+    })
     
     // 重置表单并关闭对话框
     newComment.value = {
@@ -396,9 +649,22 @@ async function submitComment() {
       content: ''
     }
     showCommentDialog.value = false
+    
+    // 显示成功提示
+    toast.add({
+      severity: 'success',
+      summary: '成功',
+      detail: '评论已提交',
+      life: 3000
+    })
   } catch (error) {
     console.error('提交评论失败:', error)
-    alert('提交评论失败，请稍后再试')
+    toast.add({
+      severity: 'error',
+      summary: '错误',
+      detail: '提交评论失败: ' + (error.response?.data?.message || error.message),
+      life: 5000
+    })
   }
 }
 
@@ -414,19 +680,62 @@ onMounted(async () => {
   error.value = null
   
   try {
-    const response = await axios.get(`/api/resources/${resourceId}`)
-    console.log('API响应数据:', response.data) // 调试日志
-    if (response.data) {
-      resource.value = response.data
-      console.log('资源数据已加载:', resource.value) // 调试日志
+    // 获取资源详情、评论和收藏状态
+    const [resourceResponse, commentsResponse, favoriteResponse] = await Promise.all([
+      axios.get(`/api/resources/${resourceId}`),
+      axios.get(`/api/resources/${resourceId}/comments`),
+      axios.get(`/api/resources/${resourceId}/favorite-status`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      }).catch(() => ({ data: { isFavorited: false } }))
+    ])
+    
+    // 初始化点赞状态
+    await initLikeStatus()
+    
+    console.log('commentsResponse.data:', commentsResponse.data)
+    console.log('点赞状态:', likeStatus.data)
+    
+    if (resourceResponse.data) {
+      resource.value = resourceResponse.data
+      if (commentsResponse.data && commentsResponse.data.comments && Array.isArray(commentsResponse.data.comments)) {
+        console.log('原始评论数据:', commentsResponse.data.comments)
+        resource.value.comments = commentsResponse.data.comments.map(comment => ({
+          id: comment.ID,
+          content: comment.Content,
+          rating: comment.Rating,
+          userId: comment.UserID,
+          userAvatar: comment.User?.avatar,
+          username: comment.User?.username || '匿名用户',
+          time: comment.CreatedAt || comment.Time
+        }))
+        console.log('处理后评论数据:', resource.value.comments)
+      }
+
     } else {
       error.value = '资源不存在'
       resource.value = {}
-      console.warn('资源不存在') // 调试日志
     }
+
+
+  // 设置收藏状态
+  console.log('收藏状态原始响应:', favoriteResponse?.data);
+  if (favoriteResponse.data.isFavorited !== undefined) {
+    isFavorited.value = favoriteResponse.data.isFavorited;
+  } else if (favoriteResponse.data.is_favorite !== undefined) {
+    isFavorited.value = favoriteResponse.data.is_favorite;
+  } else if (typeof favoriteResponse.data === 'boolean') {
+    isFavorited.value = favoriteResponse.data;
+  } else {
+    isFavorited.value = false;
+    console.warn('无法从API响应中确定初始收藏状态，默认设置为未收藏');
+  }
+  console.log('初始化收藏状态:', isFavorited.value);
+
   } catch (err) {
     error.value = err.message || '加载资源详情失败'
-    console.error('加载资源详情失败:', err)
+    console.error('加载失败:', err)
     resource.value = {}
   } finally {
     isLoading.value = false
