@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "cropperjs": "^2.0.0",
+    "date-fns": "^4.1.0",
     "dompurify": "^3.2.5",
     "element-plus": "^2.9.10",
     "marked": "^15.0.11"

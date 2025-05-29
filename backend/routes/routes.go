@@ -5,7 +5,6 @@ import (
 
 	"g/front/backend/controllers"
 	"g/front/backend/middleware"
-	"g/front/backend/models"
 )
 
 // SetupRoutes 设置API路由
@@ -101,45 +100,35 @@ func SetupRoutes(r *gin.Engine, userController *controllers.UserController, reso
 		protected.GET("/forum/topics/:id/favorite-status", forumController.GetFavoriteStatus)
 
 		// 管理员路由
-		admin := protected.Group("/admin")
-		// 管理员权限检查中间件
-		admin.Use(func(c *gin.Context) {
-			// 获取用户ID
-			userID, exists := c.Get("userID")
-			if !exists {
-				c.JSON(401, gin.H{"error": "未授权"})
-				c.Abort()
-				return
-			}
-
-			// 查询用户角色
-			var user models.User
-			result := adminController.DB.First(&user, userID)
-			if result.Error != nil {
-				c.JSON(404, gin.H{"error": "用户不存在"})
-				c.Abort()
-				return
-			}
-
-			// 检查是否为管理员
-			if user.Role != "admin" {
-				c.JSON(403, gin.H{"error": "权限不足"})
-				c.Abort()
-				return
-			}
-
-			c.Next()
-		})
+		admin := api.Group("/admin")
+		admin.Use(middleware.AuthMiddleware())
 		{
 			// 资源审核
 			admin.GET("/resources/pending", adminController.GetPendingResources)
 			admin.PUT("/resources/:id/review", adminController.ReviewResource)
 
+			// 用户管理
+			admin.GET("/users", adminController.GetUsers)
+			admin.DELETE("/users/:id", adminController.DeleteUser)
+			admin.PUT("/users/:id/role", adminController.UpdateUserRole)
+
+			// 资源管理
+			admin.GET("/resources", adminController.GetResources)
+			admin.DELETE("/resources/:id", adminController.DeleteResource)
+
+			// 论坛管理
+			admin.GET("/forum/topics", adminController.GetTopics)
+			admin.DELETE("/forum/topics/:id", adminController.DeleteTopic)
+
 			// 积分管理
-			admin.POST("/points/add", pointsController.AddPoints)
+			admin.GET("/points/records", adminController.GetPointsRecords)
+			admin.POST("/points/adjust", adminController.AdjustPoints)
 
 			// 统计信息
 			admin.GET("/stats", adminController.GetUserStats)
+			admin.GET("/stats/users", adminController.GetUserStats)
+			admin.GET("/stats/resources", adminController.GetResourceStats)
+			admin.GET("/stats/forum", adminController.GetForumStats)
 		}
 
 		// AI聊天

@@ -22,7 +22,7 @@
             论坛
           </router-link>
           <router-link to="/chat" class="text-gray-700 hover:text-blue-600 transition duration-300">
-            聊天
+            AI助理
           </router-link>
         </div>
 

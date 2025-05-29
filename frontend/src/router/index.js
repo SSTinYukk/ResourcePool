@@ -113,9 +113,40 @@ const router = createRouter({
     // 管理员路由
     {
       path: '/admin',
-      name: 'admin',
-      component: () => import('../views/admin/AdminDashboard.vue'),
-      meta: { requiresAuth: true, requiresAdmin: true }
+      component: () => import('../layouts/AdminLayout.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+      children: [
+        {
+          path: '',
+          name: 'admin-dashboard',
+          component: () => import('../views/admin/AdminDashboard.vue')
+        },
+        {
+          path: 'users',
+          name: 'admin-users',
+          component: () => import('../views/admin/UserManagement.vue')
+        },
+        {
+          path: 'resources',
+          name: 'admin-resources',
+          component: () => import('../views/admin/ResourceManagement.vue')
+        },
+        {
+          path: 'forum',
+          name: 'admin-forum',
+          component: () => import('../views/admin/ForumManagement.vue')
+        },
+        {
+          path: 'points',
+          name: 'admin-points',
+          component: () => import('../views/admin/PointsManagement.vue')
+        },
+        {
+          path: 'stats',
+          name: 'admin-stats',
+          component: () => import('../views/admin/StatsManagement.vue')
+        }
+      ]
     },
     // 404页面
     {

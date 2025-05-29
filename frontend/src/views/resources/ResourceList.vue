@@ -68,6 +68,29 @@
           />
         </div>
       </div>
+      
+      <!-- 分类筛选菜单 -->
+      <div class="mt-4 pt-4 border-t border-gray-100">
+        <div class="flex flex-wrap gap-2">
+          <span class="text-gray-600 font-medium mr-2">分类筛选:</span>
+          <button 
+            @click="selectCategory('')" 
+            class="px-3 py-1 rounded-full text-sm" 
+            :class="selectedCategory === '' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'"
+          >
+            全部
+          </button>
+          <button 
+            v-for="category in categories.filter(c => c.id !== '')" 
+            :key="category.id"
+            @click="selectCategory(category.id)" 
+            class="px-3 py-1 rounded-full text-sm" 
+            :class="selectedCategory === category.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'"
+          >
+            {{ category.name }}
+          </button>
+        </div>
+      </div>
     </div>
     
     <!-- 资源列表 -->
@@ -293,6 +316,13 @@ const getCategoryName = (categoryId) => {
   if (!categoryId) return '全部分类';
   const category = categories.value.find(c => c.id === categoryId);
   return category ? category.name : '未知分类';
+};
+
+// 选择分类
+const selectCategory = (categoryId) => {
+  selectedCategory.value = categoryId;
+  currentPage.value = 1; // 重置到第一页
+  loadResources();
 };
 
 const searchResources = () => {

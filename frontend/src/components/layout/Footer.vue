@@ -20,7 +20,7 @@
               <router-link to="/forum" class="text-gray-600 hover:text-blue-600 text-sm">论坛</router-link>
             </li>
             <li>
-              <router-link to="/chat" class="text-gray-600 hover:text-blue-600 text-sm">聊天</router-link>
+              <router-link to="/chat" class="text-gray-600 hover:text-blue-600 text-sm">AI助理</router-link>
             </li>
           </ul>
         </div>
@@ -28,37 +28,19 @@
         <div>
           <h3 class="text-lg font-semibold text-gray-800 mb-3">联系我们</h3>
           <ul class="space-y-2">
-            <li class="flex items-center text-gray-600 text-sm">
-              <i class="pi pi-envelope mr-2"></i>
-              <span>contact@v1bk.com</span>
-            </li>
+          
             <li class="flex items-center text-gray-600 text-sm">
               <i class="pi pi-phone mr-2"></i>
               <span>+86 123 4567 8901</span>
             </li>
             <li class="flex items-center text-gray-600 text-sm">
               <i class="pi pi-map-marker mr-2"></i>
-              <span>北京市海淀区</span>
+              <span>陕西省西安市西安邮电大学</span>
             </li>
           </ul>
         </div>
         
         <div>
-          <h3 class="text-lg font-semibold text-gray-800 mb-3">关注我们</h3>
-          <div class="flex space-x-4">
-            <a href="#" class="text-gray-600 hover:text-blue-600">
-              <i class="pi pi-facebook text-xl"></i>
-            </a>
-            <a href="#" class="text-gray-600 hover:text-blue-600">
-              <i class="pi pi-twitter text-xl"></i>
-            </a>
-            <a href="#" class="text-gray-600 hover:text-blue-600">
-              <i class="pi pi-instagram text-xl"></i>
-            </a>
-            <a href="#" class="text-gray-600 hover:text-blue-600">
-              <i class="pi pi-github text-xl"></i>
-            </a>
-          </div>
         </div>
       </div>
       
